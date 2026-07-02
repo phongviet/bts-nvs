@@ -1,2 +1,3 @@
 exp_id,scene_split,mean_psnr,mean_ssim,mean_lpips,mean_psnr_norm,mean_score,timestamp,git_commit
 exp001_baseline_splatfacto,hcm0034(public),8.852,0.1671,0.9327,0.2213,0.1434,2026-07-02T15:05:49+07:00,2faeb11
+exp001_baseline_splatfacto (pose-bug-fixed),hcm0034(public),21.318,0.7340,0.1562,0.5329,0.7176,2026-07-02T15:49:52+07:00,PENDING

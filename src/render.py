@@ -11,13 +11,22 @@ Two modes:
 Pose convention notes (must hold for both modes to agree):
   - Input poses (test_poses.csv AND COLMAP images.bin) are qw,qx,qy,qz,tx,ty,tz
     in COLMAP's world-to-camera / OpenCV convention.
-  - Nerfstudio's colmap dataparser converts to its own convention with:
-      c2w = inverse(w2c); c2w[0:3,1:3] *= -1; c2w = c2w[[1,0,2,3]]; c2w[2,:] *= -1
-    then applies a single global `dataparser_transform` (3x4) + `dataparser_scale`
-    (computed once from the training poses, saved in the training run) to every
-    pose, train AND test alike. We replicate both steps here using the values
-    Nerfstudio itself produced for this checkpoint (loaded via eval_setup), so
-    test poses land in the exact same space the model was trained in.
+  - Nerfstudio's ColmapDataParser (nerfstudio 1.1.5,
+    assume_colmap_world_coordinate_convention=True, the default) does:
+      c2w = inverse(w2c); c2w[0:3,1:3] *= -1                     # OpenCV -> OpenGL
+      c2w = c2w[[0,2,1,3], :]; c2w[2,:] *= -1                    # colmap world -> nerfstudio world (-y up -> +z up)
+    BUT it also folds that exact world-coordinate swap into `dataparser_transform`
+    itself (see ColmapDataParser._get_all_images_and_cameras: it returns
+    `applied_transform`, which _generate_dataparser_outputs composes as
+    `transform_matrix = transform_matrix @ applied_transform` before saving it
+    as `dataparser_transform`). So the saved dataparser_transform already
+    contains the world-coordinate swap -- applying it manually AND via the
+    saved transform double-swaps the axes and silently garbles every pose
+    (this bit us: renders looked like a plausible-content fragment crammed
+    into a corner with vast blank regions, on BOTH seen and unseen views).
+    The correct replication is: apply ONLY the OpenCV->OpenGL flip by hand,
+    then apply the saved `dataparser_transform` (3x4) + `dataparser_scale` --
+    do NOT also apply the manual axis-swap/permutation step.
 """
 import argparse
 import csv
@@ -38,7 +47,13 @@ def qvec2rotmat(qvec):
 
 
 def colmap_pose_to_c2w(qvec, tvec) -> np.ndarray:
-    """world-to-camera (qvec,tvec) -> nerfstudio-convention camera-to-world 4x4."""
+    """world-to-camera (qvec,tvec) -> OpenGL-convention camera-to-world 4x4.
+
+    Only the OpenCV->OpenGL flip is applied here. The world-coordinate axis
+    swap (colmap -y-up -> nerfstudio +z-up) is NOT applied manually -- it is
+    already baked into the saved `dataparser_transform` (see module docstring)
+    and gets applied once, correctly, in apply_dataparser_transform().
+    """
     rotation = qvec2rotmat(qvec)
     translation = np.array(tvec).reshape(3, 1)
     w2c = np.eye(4)
@@ -46,8 +61,6 @@ def colmap_pose_to_c2w(qvec, tvec) -> np.ndarray:
     w2c[:3, 3:4] = translation
     c2w = np.linalg.inv(w2c)
     c2w[0:3, 1:3] *= -1
-    c2w = c2w[np.array([1, 0, 2, 3]), :]
-    c2w[2, :] *= -1
     return c2w
 
 

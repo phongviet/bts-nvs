@@ -27,11 +27,31 @@ Format per entry: hypothesis -> what ran -> result -> decision.
 - **Decision:** Infrastructure milestone achieved — pipeline is fully
   validated end-to-end (data loading with correct train/test isolation, pose
   conversion, training, per-pose-intrinsics rendering, exact-formula
-  metrics). Quality is Week 2's job. This result matches
-  `Documents/plan_overall.md`'s prediction that vanilla/sparse-init
-  significantly underperforms dense init — **prioritize the Week 2 init
-  ablation (dense COLMAP / depth-unprojected) first**, it's expected to be
-  the single biggest lever. Also prioritize sky masking given the
-  near-blank nadir view. `PSNR_MAX=40.0` in `metrics.py` is still an
-  unconfirmed placeholder — must verify against official rules before
-  trusting `PSNR_norm`/`Score` absolute values.
+  metrics). `PSNR_MAX=40.0` in `metrics.py` is still an unconfirmed
+  placeholder — must verify against official rules before trusting
+  `PSNR_norm`/`Score` absolute values.
+
+- **⚠️ Critical bug found and fixed (same day):** the low initial score was
+  NOT primarily reconstruction quality — `src/render.py`'s hand-rolled
+  COLMAP→Nerfstudio pose conversion double-applied the world-coordinate axis
+  swap. Nerfstudio 1.1.5's `ColmapDataParser` (with
+  `assume_colmap_world_coordinate_convention=True`, our default) already
+  bakes that swap into the saved `dataparser_transform`
+  (`_get_all_images_and_cameras` returns `applied_transform`, composed into
+  `transform_matrix` in `_generate_dataparser_outputs`). `render.py` was
+  applying the swap by hand (with an additionally wrong permutation,
+  `[1,0,2,3]` instead of the correct `[0,2,1,3]`) *and* via the saved
+  transform, garbling every rendered pose. Caught by visually rendering a
+  **seen/training view** and comparing to its GT — it should reconstruct
+  near-perfectly and instead showed a small recognizable fragment crammed in
+  one corner with the rest blank. Fixed by removing the manual axis-swap
+  step; `colmap_pose_to_c2w` now applies only the OpenCV→OpenGL flip, and
+  the (correct) axis swap comes from `dataparser_transform` alone.
+  **Result after fix (same checkpoint, no retraining): Score 0.143 → 0.718**
+  (PSNR 8.85→21.3, SSIM 0.167→0.734, LPIPS 0.933→0.156). This means the
+  *actual* baseline reconstruction quality was always reasonable — Week 1's
+  low number was a rendering-script bug, not a model problem.
+- **Takeaway / process note:** always sanity-check any custom render/eval
+  script against a **seen (training) view** before trusting scores on
+  unseen views — a seen view should look close to perfect, and if it
+  doesn't, the bug is in the eval path, not the model.
