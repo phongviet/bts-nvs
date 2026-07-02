@@ -4,6 +4,19 @@ Status: **DRAFT / INCOMPLETE** — fill in from `Documents/AI Race 2026 - ....ht
 and any rules PDF/page before the Day-5 submission. Everything below marked
 CONFIRM must be verified before trusting `package_submission.py` or `metrics.py`.
 
+## ⚠️ Critical data gotcha (found Week 1, Day 2)
+The provided `train/sparse/0/images.bin` contains poses for the scene's
+**full capture**, not just the 240 train images: for `hcm0034` it has 337
+posed entries = 240 train + 60 test + 37 extra registration-only frames.
+Nerfstudio's default `ColmapDataParser` (`eval_mode="interval"`) splits
+across ALL of images.bin, which **leaks the held-out test images straight
+into training** if used unmodified. Always run
+`src/data_prep/filter_colmap_train.py` first (writes a train-only filtered
+sparse model to `data/processed/.../colmap_train_only/` + a staging dir with
+symlinked `images/`+`sparse/0/`), and train with
+`--pipeline.datamanager.dataparser.eval-mode=all` on that staging dir.
+Verified zero leakage on `hcm0034` after filtering.
+
 ## Data (confirmed from provided archive)
 - Phase 1: 13 scenes total — `public_set/` (5: hcm0031, hcm0034, HCM0181, HCM0193, HCM0204)
   and `private_set1/` (8: HCM0249, HCM0254, HCM0276, HCM1439, HNI0131, HNI0265, HNI0366, HNI0437).
