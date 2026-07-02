@@ -1,0 +1,25 @@
+# Data — never commit, always regenerable from organizers' archive or data/raw/
+data/raw/
+data/processed/
+
+# Run artifacts — heavy, gitignored except logs/metrics (see runs/*/**/logs, metrics_*.json)
+runs/*/**/checkpoints/
+runs/*/**/renders_val/
+runs/*/**/renders_test/
+runs/*/**/logs/tensorboard/
+
+# Submissions (zips are large; keep SUBMISSION_LOG.md only)
+submissions/**/*.zip
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+*.egg-info/
+
+# OS cruft from macOS-zipped archives
+.DS_Store
+__MACOSX/
+
+# Env
+*.env

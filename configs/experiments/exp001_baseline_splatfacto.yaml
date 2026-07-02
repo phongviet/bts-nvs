@@ -1,0 +1,31 @@
+# Week 1 baseline — vanilla splatfacto, default strategy, no ablations.
+experiment: exp001_baseline_splatfacto
+method: splatfacto
+max_num_iterations: 30000
+notes: >
+  Week 1 baseline to prove the end-to-end pipeline (train -> render -> metric
+  -> package -> submit) and to establish the local-vs-leaderboard score
+  reconciliation. Not tuned. GPU: GTX 1660 Ti, 6GB VRAM -- default splatfacto
+  only (splatfacto-big deferred / may not fit).
+
+scenes:
+  public_set:
+    - hcm0031
+    - hcm0034
+    - HCM0181
+    - HCM0193
+    - HCM0204
+  private_set1:
+    - HCM0249
+    - HCM0254
+    - HCM0276
+    - HCM1439
+    - HNI0131
+    - HNI0265
+    - HNI0366
+    - HNI0437
+
+train_command_template: >
+  ns-train splatfacto --data data/raw/phase1/{split}/{scene}/train
+  --output-dir runs/phase1/exp001_baseline_splatfacto/{scene}
+  --max-num-iterations 30000 --viewer.quit-on-train-completion True
