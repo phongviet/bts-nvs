@@ -2,11 +2,14 @@
 data/raw/
 data/processed/
 
-# Run artifacts — heavy, gitignored except logs/metrics (see runs/*/**/logs, metrics_*.json)
+# Run artifacts — heavy binaries gitignored; small configs/metrics/logs kept
+runs/*/**/nerfstudio_models/
 runs/*/**/checkpoints/
 runs/*/**/renders_val/
 runs/*/**/renders_test/
 runs/*/**/logs/tensorboard/
+runs/**/*.ckpt
+runs/**/events.out.tfevents.*
 
 # Submissions (zips are large; keep SUBMISSION_LOG.md only)
 submissions/**/*.zip
