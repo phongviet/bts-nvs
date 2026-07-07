@@ -26,3 +26,10 @@ __MACOSX/
 
 # Env
 *.env
+
+# Unzipped submission staging/results dirs (renders are heavy; zips already ignored)
+submissions/phase1/*_results/
+submissions/phase1/exp001_results/
+
+# External clones (VGGT etc.) -- pinned by commit hash in docs, not vendored
+third_party/
