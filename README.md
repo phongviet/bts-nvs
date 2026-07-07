@@ -1,7 +1,9 @@
 # bts-nvs — Viettel AI Race 2026, BTS Digital Twin (Novel View Synthesis)
 
 3D Gaussian Splatting pipeline for the BTS tower NVS competition (Phase 1).
-See `docs/strategy.md` (full method plan) and `docs/reproducibility_checklist.md`.
+See `docs/strategy.md` (full method plan, aligned to `Documents/plan_overall_v2.md`) and `docs/reproducibility_checklist.md`.
+
+**Current strategy (v2):** carefully-initialized 3DGS (three init arms — sparse / dense COLMAP / VGGT-style pseudo-cloud) + MCMC backend, then a **generative stage** (post-hoc Difix3D+/SD-Turbo enhancer, with in-training pseudo-GT as a stretch goal) as the biggest LPIPS lever — *not* an exotic backend. All generative finetuning stays strictly within our own provided BTS images (no external-scene pooling).
 
 ## Setup
 
@@ -39,4 +41,4 @@ python src/metrics.py --renders runs/.../renders_test --gt <scene>/test/images -
 python src/package_submission.py --runs-dir runs/phase1/exp001_baseline_splatfacto --out submissions/phase1/submission_exp001.zip
 ```
 
-See `Documents/plan_week1.md` (outside this repo) for the day-by-day Week 1 plan.
+See `Documents/plan_week1.md` and `Documents/plan_week2.md` (outside this repo) for the day-by-day weekly plans, and `Documents/plan_overall_v2.md` for the current overall strategy.

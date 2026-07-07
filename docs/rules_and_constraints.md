@@ -30,18 +30,42 @@ Verified zero leakage on `hcm0034` after filtering.
 - CONFIRM: PSNR normalization constant/clip range (`metrics.py` currently defaults `psnr_max=40.0` as a placeholder).
 - CONFIRM: SSIM window size / implementation (skimage default `win_size=11` used currently).
 
-## Submission format (CONFIRM before Day 5)
-- CONFIRM: required ZIP folder structure (per-scene subfolder? flat?).
-- CONFIRM: required filename convention (must match `test/images/*` names exactly, including case).
-- CONFIRM: required image format/extension (JPG vs PNG) and whether dimensions must exactly match `width,height` from `test_poses.csv`.
-- CONFIRM: whether all 13 scenes must be present in every submission, or per-scene submissions are allowed.
+## Submission format (confirmed from "AI Race 2026 - Submission" rules page, Round 1)
+- ZIP named `submission_round1.zip`, one subfolder per scene, one image per required test pose:
+  `submission_round1.zip / <scene>/ <image_name> ...`. The rules page shows illustrative
+  `scene_001/0001.png` names, but the actual requirement is **filename = `image_name` column
+  from that scene's `test_poses.csv`** (real files are e.g. `DJI_..._V.JPG`) and **image size
+  = exact `width,height` from that same CSV row** — both verified locally before packaging
+  (see `submissions/phase1/SUBMISSION_LOG.md`).
+- All scenes' images must be present in one ZIP — missing any pose for any scene "sẽ ảnh hưởng
+  đến kết quả" (affects scoring), i.e. all 13 scenes required per submission, not per-scene.
+- Submission limits: 5 uploads/day, 600s cooldown between them, scored on GPU infra. System
+  keeps the **last** submission before the round deadline (2026-07-30), so late re-submits are
+  safe as long as they land before the cutoff.
+- Round 1 data: 150-300 train images/scene, 40-70 test poses/scene, 200-300MB/scene.
+- CONFIRM still open: exact LPIPS backbone, PSNR normalization constant, SSIM window (see
+  Scoring section above) -- the submission-format doc above doesn't cover scoring internals.
 
-## Anti-cheating rules (from plan_overall.md research — CONFIRM against official text)
-- Allowed: training 3DGS/NeRF only on provided images + provided COLMAP; generically pretrained scene-agnostic foundation models (depth/segmentation/diffusion priors) as long as not fine-tuned on competition/BTS imagery.
+## Anti-cheating rules (from plan_overall research — CONFIRM against official text)
+- Allowed: training 3DGS/NeRF only on provided images + provided COLMAP; generically pretrained scene-agnostic foundation models (depth/segmentation/geometry/diffusion priors) as long as not fine-tuned on competition/BTS imagery.
 - Banned: scraping BTS/telecom imagery or other public 3D/telecom datasets of similar objects; any per-test-pose manual editing/compositing/retouching; test-time optimization using test images.
+- **(v2) No external-scene pooling for generative-model finetuning.** Qualcomm pooled 25+79 external sequences and XiaomiEV trained TIA-Net on the public Para-Lane multi-traversal dataset — both are external data of similar scenes and are **not compliant to reproduce**. Every (render, real) pair used to finetune any enhancer/pseudo-GT model must come **only from our own provided BTS training images** (hold out a val subset, render 3DGS at those poses, pair with the real photos, pool across Phase-1 scenes). This is why XiaomiEV's TIA-Net is deprioritized: irrelevant to BTS geometry *and* its training recipe isn't compliant.
 - Top teams must be able to submit training/inference code, configs, dependency versions, checkpoints, logs — see `docs/reproducibility_checklist.md`.
+
+## Pretrained-model provenance (generic / scene-agnostic — fill in as each is first used)
+Every generically-pretrained model must be documented here with checkpoint source + training corpus + license, and an explicit statement it was **not** trained/finetuned on any competition/BTS imagery. Required before Week-4 compliance pass.
+
+| Model | Role | Used from | Checkpoint / source | Training corpus (generic?) | License | CONFIRM |
+|-------|------|-----------|---------------------|----------------------------|---------|---------|
+| Depth Anything V2 | Monocular depth prior | Wk2/3 | — | generic (not BTS) | — | [ ] |
+| SAM / Grounded-SAM 2 / OneFormer | Sky & transient masks | Wk2 | — | generic (not BTS) | — | [ ] |
+| SegFormer-B0 (ADE20K) | Sky masks for backend-locking A/B (arm actually used instead of the row above) | Wk2 | `nvidia/segformer-b0-finetuned-ade-512-512` on HuggingFace Hub via `transformers.pipeline("image-segmentation")`, used strictly off-the-shelf for inference (no gradient updates) in `src/data_prep/build_sky_masks.py` | ADE20K (generic scene-parsing dataset; not BTS) | Apache 2.0 (per HF model card, CONFIRM) | [ ] confirm license |
+| VGGT-1B (Meta AI, Wang et al. CVPR 2025) | Pseudo-point-cloud init arm (v2, arm c) | Wk2 | `facebook/VGGT-1B` on HuggingFace Hub via `VGGT.from_pretrained`; repo `github.com/facebookresearch/vggt` vendored read-only under `third_party/vggt/`, unmodified | Generic multi-view/SfM-style training corpora per the VGGT paper; not trained/finetuned on BTS/telecom imagery. Used strictly off-the-shelf for inference (no gradient updates) in `src/data_prep/build_vggt_init.py` | CC BY-NC 4.0 (Meta, non-commercial research) | [ ] confirm license compatible with competition use |
+| Difix3D+ / SD-Turbo | Diffusion "fixer" (post-hoc enhancer + in-training pseudo-GT) | Wk3 | — | generic (not BTS); **finetuned only on our own renders** | — | [ ] |
 
 ## Action items
 - [ ] Read the official rules doc/site in full, replace every CONFIRM above with the actual value.
 - [ ] Update `src/metrics.py --psnr-max` default once confirmed.
 - [ ] Update `src/package_submission.py` layout once confirmed.
+- [ ] Fill the pretrained-model provenance table as each model is first used (VGGT/Depth Anything V2/SAM in Week 2; Difix3D+/SD-Turbo in Week 3).
+- [ ] Week-4 compliance pass: confirm all provenance rows complete + explicit statement that all finetuning data came only from our own provided BTS images (no Para-Lane-style external pooling).
