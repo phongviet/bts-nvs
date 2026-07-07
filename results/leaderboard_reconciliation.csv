@@ -1,0 +1,3 @@
+submission,date,exp,local_psnr,local_ssim,local_lpips,local_score,lb_score,notes
+1,2026-07-07,exp001,21.00,,,0.7036,56.81480,psnr/score derived (dense mean - init-ablation delta); ssim/lpips not logged per-scene for sparse -- incomplete row
+2,2026-07-07,exp002,21.157,0.71036,0.16116,0.70732,57.19840,public means over 5 scenes from week2_init_ablation.csv (b_dense; duplicate hcm0034 row deduped)
