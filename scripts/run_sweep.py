@@ -101,6 +101,10 @@ def build_train_cmd(sweep: dict, variant_name: str, scene: str) -> list[str]:
     cmd += list(sweep.get("base_args", [])) + [str(a).format(scene=scene)
                                                for a in v.get("args", [])]
     cmd += ["colmap", "--eval-mode", "all", "--colmap-path", "sparse/0"]
+    # dataparser-level args must come after the `colmap` subcommand (e.g.
+    # --masks-path for exp008; masks are ONLY used when this flag is passed --
+    # ColmapDataParser.masks_path defaults to None, there is no auto-pickup).
+    cmd += [str(a).format(scene=scene) for a in v.get("dataparser_args", [])]
     return cmd
 
 

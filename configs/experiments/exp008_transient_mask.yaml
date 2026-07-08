@@ -1,13 +1,15 @@
 # exp008 -- transient-mask-out-of-loss A/B (plan_execution_v3 W3 D3, local).
-# Prereq per scene (symlinks masks/ into the dense staging dir):
-#   python src/data_prep/build_transient_masks.py \
-#       --images data/raw/phase1/public_set/{scene}/train/images \
-#       --processed-root data/processed/phase1 --scene {scene} \
-#       --staging-dir-name train_staging_dense --qa
-# nerfstudio picks up <staging>/masks automatically (same mechanism as the
-# Week-2 sky masks). Expect the win concentrated on HCM0181 (street traffic).
-# NOTE: control and masked share data_template -- run control BEFORE building
-# masks into the staging dir, or point control at a mask-free staging copy.
+# Prereq per scene: masks built by src/data_prep/build_transient_masks.py and
+# symlinked as <staging>/masks -> transient_masks/ (mask files: <stem>.png,
+# 255=keep, 0=ignore).
+# IMPORTANT (verified Jul 9): nerfstudio does NOT auto-pick-up <staging>/masks.
+# ColmapDataParser.masks_path defaults to None; masks are used only when
+# --masks-path is passed as a DATAPARSER arg (after `colmap`), exactly like the
+# Week-2 sky_mask variant (run_backend_ablation_hcm0034.sh line 148). Hence
+# dataparser_args below. Consequence: control runs are unaffected by the masks
+# symlink -- no ordering constraint between control and masked.
+# Control = exp007's control cell (same CSV, same base config, dense +
+# antialiased 30k). Expect the win concentrated on HCM0181 (street traffic).
 experiment: exp008_transient_mask
 results_csv: results/week3_tierA_ablation.csv
 gpu: local
@@ -19,4 +21,7 @@ base_args:
   - "--pipeline.model.rasterize-mode"
   - "antialiased"
 variants:
-  masked: {method: splatfacto, iters: 30000}
+  masked:
+    method: splatfacto
+    iters: 30000
+    dataparser_args: ["--masks-path", "masks"]

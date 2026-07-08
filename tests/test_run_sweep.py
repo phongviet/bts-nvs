@@ -23,6 +23,8 @@ SWEEP = {
                    "args": ["--pipeline.model.cap-max", "2000000"]},
         "ft": {"method": "splatfacto-perceptual", "iters": 37000,
                "load_dir_template": "runs/x/{scene}/models"},
+        "masked": {"method": "splatfacto", "iters": 30000,
+                   "dataparser_args": ["--masks-path", "masks"]},
     },
 }
 
@@ -34,6 +36,12 @@ def test_build_train_cmd_basic():
     assert "--pipeline.model.cap-max" in cmd and "2000000" in cmd
     assert "antialiased" in cmd
     assert cmd[-5:] == ["colmap", "--eval-mode", "all", "--colmap-path", "sparse/0"]
+
+
+def test_build_train_cmd_dataparser_args_after_colmap():
+    cmd = build_train_cmd(SWEEP, "masked", "hcm0034")
+    assert cmd[-2:] == ["--masks-path", "masks"]
+    assert cmd.index("--masks-path") > cmd.index("colmap")
 
 
 def test_build_train_cmd_load_dir_templated():
