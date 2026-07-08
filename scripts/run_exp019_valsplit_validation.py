@@ -32,6 +32,7 @@ Usage (airace env):
 import argparse
 import csv
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -39,6 +40,11 @@ import numpy as np
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
+
+# exp004's mcmc checkpoint uses the custom splatfacto-mcmc method; nerfstudio's
+# registry reads this env var at first import, so set it before eval_setup.
+from scripts.run_sweep import METHOD_CONFIGS_ENV  # noqa: E402
+os.environ.setdefault("NERFSTUDIO_METHOD_CONFIGS", METHOD_CONFIGS_ENV)
 
 SCENES = ["hcm0034", "HCM0181"]
 N_VAL = 30
