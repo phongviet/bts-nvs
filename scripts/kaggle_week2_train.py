@@ -27,9 +27,11 @@ failure (same convention as the dense-COLMAP Kaggle notebook).
 import argparse
 import glob
 import os
+import queue
 import shutil
 import subprocess
 import sys
+import threading
 import traceback
 from pathlib import Path
 
@@ -37,13 +39,25 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 RENDER_PY = REPO_ROOT / "src" / "render.py"
 
 
-def run_cmd(cmd, log_path, dry_run=False):
+def visible_gpu_count():
+    """Number of CUDA devices, honoring an already-set CUDA_VISIBLE_DEVICES."""
+    cvd = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if cvd is not None:
+        return len([d for d in cvd.split(",") if d.strip() != ""])
+    try:
+        out = subprocess.run(["nvidia-smi", "-L"], capture_output=True, text=True)
+        return len([l for l in out.stdout.splitlines() if l.startswith("GPU ")])
+    except FileNotFoundError:
+        return 0
+
+
+def run_cmd(cmd, log_path, dry_run=False, env=None):
     print(f"+ {' '.join(cmd)}  (log: {log_path})", flush=True)
     if dry_run:
         return
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     with open(log_path, "w") as logf:
-        result = subprocess.run(cmd, stdout=logf, stderr=subprocess.STDOUT)
+        result = subprocess.run(cmd, stdout=logf, stderr=subprocess.STDOUT, env=env)
     if result.returncode != 0:
         with open(log_path, errors="replace") as logf:
             tail = logf.readlines()[-40:]
@@ -75,12 +89,15 @@ def make_staging(scene_dir, staging_root, scene):
     return staging
 
 
-def process_scene(rel_scene_path, args):
+def process_scene(rel_scene_path, args, gpu_id=None):
     scene = os.path.basename(rel_scene_path)
     scene_dir = os.path.join(args.input_root, rel_scene_path)
     run_dir = os.path.join(args.output_root, scene)
     renders = os.path.join(run_dir, "renders_test")
     log_dir = os.path.join(args.log_root, scene)
+    env = None
+    if gpu_id is not None:
+        env = {**os.environ, "CUDA_VISIBLE_DEVICES": str(gpu_id)}
 
     if os.path.exists(os.path.join(renders, ".done")):
         print(f"[{scene}] renders_test/.done present, skipping.")
@@ -106,7 +123,7 @@ def process_scene(rel_scene_path, args):
             "--viewer.quit-on-train-completion", "True",
             "--pipeline.model.rasterize-mode", "antialiased",
             "colmap", "--eval-mode", "all", "--colmap-path", "sparse/0",
-        ], os.path.join(log_dir, "ns_train.log"), args.dry_run)
+        ], os.path.join(log_dir, "ns_train.log"), args.dry_run, env=env)
 
     configs = sorted(glob.glob(os.path.join(run_dir, "**", "config.yml"), recursive=True))
     config = configs[-1] if configs else os.path.join(run_dir, "<config.yml after training>")
@@ -115,7 +132,7 @@ def process_scene(rel_scene_path, args):
         "--config", config, "--mode", "test",
         "--poses-csv", os.path.join(scene_dir, "test", "test_poses.csv"),
         "--out", renders,
-    ], os.path.join(log_dir, "render.log"), args.dry_run)
+    ], os.path.join(log_dir, "render.log"), args.dry_run, env=env)
     if args.dry_run:
         return
     Path(renders, ".done").touch()
@@ -139,18 +156,55 @@ def main():
                     help="drop step-*.ckpt from outputs (smaller zip, but the local "
                          "fleet script will RETRAIN such scenes; exp009 also needs the ckpts)")
     ap.add_argument("--dry-run", action="store_true", help="print the per-scene commands without running")
+    ap.add_argument("--parallel", default="1",
+                    help="concurrent scenes, one GPU each ('auto' = one per visible GPU; "
+                         "Kaggle T4 x2 sessions -> 2)")
     args = ap.parse_args()
+
+    workers = visible_gpu_count() if args.parallel == "auto" else int(args.parallel)
+    workers = max(1, workers)
 
     print(f"{len(args.scenes)} scenes to process: {args.scenes}", flush=True)
     failed = []
-    for rel in args.scenes:
-        print(f"=============== {rel} ===============", flush=True)
-        try:
-            process_scene(rel, args)
-        except Exception as e:
-            print(f"!! FAILED {rel}: {e}", flush=True)
-            traceback.print_exc()
-            failed.append(rel)
+
+    if workers == 1:
+        for rel in args.scenes:
+            print(f"=============== {rel} ===============", flush=True)
+            try:
+                process_scene(rel, args)
+            except Exception as e:
+                print(f"!! FAILED {rel}: {e}", flush=True)
+                traceback.print_exc()
+                failed.append(rel)
+    else:
+        # One worker thread per GPU, pinned via CUDA_VISIBLE_DEVICES, pulling
+        # scenes off a shared queue (threads are fine -- all heavy work runs
+        # in subprocesses, and per-scene output already goes to log files).
+        print(f"=== running up to {workers} scenes in parallel, one per GPU ===", flush=True)
+        scene_q = queue.Queue()
+        for rel in args.scenes:
+            scene_q.put(rel)
+
+        def worker(gpu_id):
+            while True:
+                try:
+                    rel = scene_q.get_nowait()
+                except queue.Empty:
+                    return
+                print(f"=============== {rel} [gpu{gpu_id}] ===============", flush=True)
+                try:
+                    process_scene(rel, args, gpu_id=gpu_id)
+                except Exception as e:
+                    print(f"!! FAILED {rel} [gpu{gpu_id}]: {e}", flush=True)
+                    traceback.print_exc()
+                    failed.append(rel)
+
+        threads = [threading.Thread(target=worker, args=(g,)) for g in range(workers)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
     if failed:
         raise SystemExit(f"failed scenes: {failed}")
     print("All scenes complete.", flush=True)
