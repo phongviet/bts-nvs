@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 CONDA_ACTIVATE = source $$(conda info --base)/etc/profile.d/conda.sh ; conda activate airace
 
-.PHONY: env train-check render-check freeze
+.PHONY: env train-check render-check freeze phase-run phase-package
 
 # Sanity check: env + gsplat CUDA extension
 env:
@@ -20,3 +20,20 @@ render:
 
 freeze:
 	$(CONDA_ACTIVATE) && conda env export > environment.yml && pip freeze > docs/pip_freeze_week1.txt
+
+# Phase-2/3 per-scene automation (raw scene -> test renders, resumable).
+# usage: make phase-run SCENE=HCM0249 SPLIT=private_set1 [PHASE=phase2]
+# See docs/phase_runbook.md. Locked config: configs/phase_locked.conf.
+PHASE ?= phase1
+phase-run:
+	scripts/phase_run.sh $(SCENE) $(SPLIT) $(PHASE)
+
+# Package + validate the submission zip across scenes.
+# usage: make phase-package SCENES="HCM0249 HCM0254 ..." [PHASE=phase2] [SPLIT=private_set1]
+SPLIT ?= private_set1
+phase-package:
+	$(CONDA_ACTIVATE) && python src/package_submission.py \
+		--runs-dir runs/$(PHASE)/phase_locked \
+		--scenes $(SCENES) \
+		--poses-root data/raw/$(PHASE)/$(SPLIT) \
+		--out submissions/$(PHASE)/phase_locked/submission_round1.zip
