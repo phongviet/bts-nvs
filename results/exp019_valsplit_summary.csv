@@ -1,0 +1,5 @@
+scene,split,n_variants,spearman_vs_test_gt,ab_agree,ab_graded,ab_agreement
+hcm0034,nth,6,0.943,13,14,0.929
+hcm0034,match,6,1.0,14,14,1.0
+HCM0181,nth,5,1.0,6,6,1.0
+HCM0181,match,5,1.0,6,6,1.0

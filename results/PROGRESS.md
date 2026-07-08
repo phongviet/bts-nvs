@@ -34,7 +34,7 @@ Local public = mean Score over the 5 public scenes vs real test GT. Local val = 
 | exp016 | Difix LoRA + per-scene gate | — | — | — | ⬜ rented | Week 3. Gate ≥0.003 (≥0.001 on under-covered scenes). |
 | exp017 | final locked fleet (reproducibility run) | — | — | — | ⬜ rented | Week 4. |
 | exp018 | SSS / UBS backend pilot | — | — | — | ⬜ rented | Inter-phase only. Promote on ≥0.005 on both pilots. |
-| exp019 | val-split validation: does match-test split rank configs like real test GT? (vs every-Nth, equal n=30) | — | — | n/a (no submission) | 🟡 local | Render-only on existing exp001/002/004 checkpoints, both pilots (11 variants). `scripts/run_exp019_valsplit_validation.py` → `results/exp019_valsplit_{validation,summary}.csv`. **Gates the A.6b private-scene split re-cut**: matched ranks ≥ nth (Spearman + A/B sign agreement) → adopt matched splits; worse → keep every-Nth. Caveat: val views seen in training → validates pose-distribution component only. |
+| exp019 | val-split validation: does match-test split rank configs like real test GT? (vs every-Nth, equal n=30) | see `results/exp019_valsplit_summary.csv` | — | n/a (no submission) | 🟢 | **Gate PASSED (Jul 8) → adopt match-test splits for private-scene selection (A.6b unblocked).** Match-test ranked all 11 variants perfectly on both pilots (Spearman 1.0, A/B agreement 14/14 + 6/6); every-Nth mis-ranked one hcm0034 pair (scale_reg vs mcmc, Spearman 0.943, 13/14). Render-only on existing exp001/002/004 checkpoints. Caveat: val views were seen in training → validates the pose-distribution component of the signal only, not holdout generalization. `scripts/run_exp019_valsplit_validation.py` → `results/exp019_valsplit_{validation,summary}.csv`. |
 
 ## Table 2 — Submissions (leaderboard results)
 
