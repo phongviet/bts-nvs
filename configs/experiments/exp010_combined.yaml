@@ -1,0 +1,23 @@
+# exp010 -- combined Tier-A config (W3 D4-5 -> W3/W4 fleet). TEMPLATE:
+# fill in the winning components after the exp006-009 read-out sync.
+# RULE (plan_execution_v3): the combination must beat EVERY single component
+# alone on both pilots -- if not, drop the clashing component (likeliest
+# clash: perceptual-FT vs ensembling).
+# Fleet order: 5 public scenes -> per-scene check -> 8 private scenes
+# (eval: val_split for the private leg; make a copy of this file with
+# split: private_set1, eval: val_split, and the 8 private scene names).
+experiment: exp010_combined
+results_csv: results/week3_tierA_ablation.csv
+gpu: rented
+split: public_set
+scenes: [hcm0034, HCM0181]   # pilots first; then all 5 public
+data_template: "data/processed/phase1/{scene}/train_staging_dense"
+eval: public_gt
+base_args:
+  - "--pipeline.model.rasterize-mode"
+  - "antialiased"
+variants:
+  combined:
+    method: splatfacto   # <- winner from exp006 (splatfacto-big / splatfacto-mcmc)
+    iters: 30000         # <- winner from exp006 iters arm
+    args: []             # <- add bilateral-grid / cap-max flags per read-out

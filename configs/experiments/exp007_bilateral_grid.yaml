@@ -1,0 +1,19 @@
+# exp007 -- bilateral-grid A/B (plan_execution_v3 W3 D1-2, local GPU).
+# Vanilla capacity (fits 6GB), dense init + antialiased held fixed; the only
+# axis is use-bilateral-grid. ~3h total on the local card.
+experiment: exp007_bilateral_grid
+results_csv: results/week3_tierA_ablation.csv
+gpu: local
+split: public_set
+scenes: [hcm0034, HCM0181]
+data_template: "data/processed/phase1/{scene}/train_staging_dense"
+eval: public_gt
+base_args:
+  - "--pipeline.model.rasterize-mode"
+  - "antialiased"
+variants:
+  # control = exp005-equivalent; keep it so the delta is measured in-sweep
+  # under identical code/data (don't compare against Week-2 CSV rows).
+  control:   {method: splatfacto, iters: 30000}
+  bilateral: {method: splatfacto, iters: 30000,
+              args: ["--pipeline.model.use-bilateral-grid", "True"]}

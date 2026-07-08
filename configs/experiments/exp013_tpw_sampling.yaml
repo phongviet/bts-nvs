@@ -1,0 +1,19 @@
+# exp013 -- test-pose-weighted train sampling (stretch pilot, W3 D4, hcm0034
+# only, local). Prereq (writes <staging>/train_weights.json):
+#   python src/data_prep/compute_train_weights.py \
+#       --scene hcm0034 --processed-root data/processed/phase1 \
+#       --out data/processed/phase1/hcm0034/train_staging_dense/train_weights.json
+# splatfacto-tpw = WeightedFullImageDatamanager (src/data/weighted_datamanager.py).
+# Drop this first if behind schedule.
+experiment: exp013_tpw_sampling
+results_csv: results/week3_tierA_ablation.csv
+gpu: local
+split: public_set
+scenes: [hcm0034]
+data_template: "data/processed/phase1/{scene}/train_staging_dense"
+eval: public_gt
+base_args:
+  - "--pipeline.model.rasterize-mode"
+  - "antialiased"
+variants:
+  tpw_boost1: {method: splatfacto-tpw, iters: 30000}

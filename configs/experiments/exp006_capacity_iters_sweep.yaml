@@ -1,0 +1,29 @@
+# exp006 -- Tier-A capacity / iters sweep (plan_execution_v3 W3 D1-2, rented GPU).
+# All arms: dense-COLMAP init + antialiased (the locked Week-2 config).
+# Run the capacity arms first; then run the *_60k/_100k variants only on the
+# best capacity arm (--variants flag), per the plan (~10-14 runs total).
+# Note: MCMC lost in Week 2 in the *sparse-count* regime on the 6GB card --
+# this retests it properly on dense init with a real cap_max on rented VRAM.
+experiment: exp006_capacity_iters_sweep
+results_csv: results/week3_tierA_ablation.csv
+gpu: rented
+split: public_set
+scenes: [hcm0034, HCM0181]
+data_template: "data/processed/phase1/{scene}/train_staging_dense"
+eval: public_gt
+base_args:
+  - "--pipeline.model.rasterize-mode"
+  - "antialiased"
+variants:
+  big_30k:      {method: splatfacto-big,  iters: 30000}
+  mcmc2M_30k:   {method: splatfacto-mcmc, iters: 30000,
+                 args: ["--pipeline.model.cap-max", "2000000"]}
+  mcmc3M_30k:   {method: splatfacto-mcmc, iters: 30000,
+                 args: ["--pipeline.model.cap-max", "3000000"]}
+  # iters arms -- run on the WINNING capacity arm only (edit method/args to match):
+  big_60k:      {method: splatfacto-big,  iters: 60000}
+  big_100k:     {method: splatfacto-big,  iters: 100000}
+  mcmc3M_60k:   {method: splatfacto-mcmc, iters: 60000,
+                 args: ["--pipeline.model.cap-max", "3000000"]}
+  mcmc3M_100k:  {method: splatfacto-mcmc, iters: 100000,
+                 args: ["--pipeline.model.cap-max", "3000000"]}

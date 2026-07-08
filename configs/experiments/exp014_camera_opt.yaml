@@ -1,0 +1,18 @@
+# exp014 -- camera-optimizer pilot with drift guard (stretch, W3 D4, hcm0034
+# only, local). GUARD: ships only if public-GT Score improves vs exp007
+# control, else OFF PERMANENTLY (test poses are fixed world-frame coordinates;
+# optimizing train cameras can drift the reconstruction away from them --
+# that's the failure mode this guard exists for).
+experiment: exp014_camera_opt
+results_csv: results/week3_tierA_ablation.csv
+gpu: local
+split: public_set
+scenes: [hcm0034]
+data_template: "data/processed/phase1/{scene}/train_staging_dense"
+eval: public_gt
+base_args:
+  - "--pipeline.model.rasterize-mode"
+  - "antialiased"
+variants:
+  camopt_so3xr3: {method: splatfacto, iters: 30000,
+                  args: ["--pipeline.model.camera-optimizer.mode", "SO3xR3"]}
