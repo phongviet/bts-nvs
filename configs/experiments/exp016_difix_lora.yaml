@@ -1,0 +1,31 @@
+# exp016 -- Difix LoRA finetune config (plan_execution_v3 W3.5 D3-4; frozen
+# by Fri night per the plan). Consumed by hand when launching:
+#   python src/enhancer/train_difix_lora.py \
+#       --pairs-root data/processed/phase1/enhancer_pairs \
+#       --holdout-scenes <see below> --out runs/phase1/exp016_difix_lora \
+#       <flags below>
+# Compliance: pairs come ONLY from build_enhancer_pairs.py (our renders vs
+# the organizers' provided train photos) -- manifest.csv is the provenance
+# record; no external-scene pooling (rules_and_constraints.md v2 rule).
+experiment: exp016_difix_lora
+model: nvidia/difix
+pairs_root: data/processed/phase1/enhancer_pairs
+# Hold out one public pilot so exp015-vs-016 A/B on it is unbiased:
+holdout_scenes: [HCM0181]
+hyperparams:
+  rank: 16
+  lr: 1.0e-4
+  steps: 4000
+  crop: 512
+  grad_accum: 4
+  lpips_w: 1.0      # LPIPS(VGG) is the loss that matters (score weight 0.4)
+  l1_w: 0.2         # down-weighted per the plan
+  eval_every: 250
+  patience: 4       # divergence guard: stop if held-out LPIPS worsens 4 evals
+  seed: 0
+prompt: "remove degradation"
+checkpoint: runs/phase1/exp016_difix_lora/best   # PEFT dir, best held-out LPIPS
+notes: >
+  Gate at read-out with src/enhancer/gate_enhancer.py (per-scene, 0.003
+  normal / 0.001 under-covered, severe-regression rule). Apply at inference
+  via run_difix.py --lora <checkpoint>.
