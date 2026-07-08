@@ -52,6 +52,27 @@ METHOD_CONFIGS_ENV = ",".join(
     f"{m}=src.register_custom_methods:{m.replace('-', '_')}_method" for m in CUSTOM_METHODS)
 
 
+def _run(cmd, cwd, env, log_path: Path | None = None):
+    """subprocess.run(check=True), optionally redirected to a log file.
+
+    Quiet mode for notebook hosts (Kaggle's log viewer hangs on ns-train's
+    thousands of progress lines): with log_path set, the subprocess's output
+    goes to the file and only the tail is surfaced here on failure.
+    """
+    if log_path is None:
+        subprocess.run(cmd, cwd=cwd, env=env, check=True)
+        return
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, "w") as logf:
+        result = subprocess.run(cmd, cwd=cwd, env=env, stdout=logf, stderr=subprocess.STDOUT)
+    if result.returncode != 0:
+        with open(log_path, errors="replace") as logf:
+            tail = logf.readlines()[-40:]
+        print(f"!! command failed (exit {result.returncode}), last 40 lines of {log_path}:", flush=True)
+        print("".join(tail), flush=True)
+        raise subprocess.CalledProcessError(result.returncode, cmd)
+
+
 def load_sweep(path: Path) -> dict:
     sweep = yaml.safe_load(path.read_text())
     for key in ("experiment", "results_csv", "scenes", "variants", "data_template",
@@ -115,30 +136,32 @@ def append_row(csv_path: Path, row: dict):
         w.writerow(row)
 
 
-def evaluate(sweep: dict, scene: str, variant: str, env: dict) -> dict:
+def evaluate(sweep: dict, scene: str, variant: str, env: dict,
+             log_dir: Path | None = None) -> dict:
     """Render + score one trained cell; returns the mean-metrics dict."""
     import json
     run_dir = run_dir_for(sweep, scene, variant)
     config = find_config(run_dir)
     scene_dir = REPO_ROOT / "data" / "raw" / "phase1" / sweep["split"] / scene
     metrics_json = run_dir / "metrics_val.json"
+    log_of = (lambda stage: log_dir / f"{scene}_{variant}_{stage}.log") if log_dir else (lambda stage: None)
 
     if sweep["eval"] == "public_gt":
         renders = run_dir / "renders_test"
-        subprocess.run([sys.executable, "src/render.py", "--config", str(config),
-                        "--mode", "test", "--poses-csv",
-                        str(scene_dir / "test" / "test_poses.csv"),
-                        "--out", str(renders)], cwd=REPO_ROOT, env=env, check=True)
-        subprocess.run([sys.executable, "src/metrics.py", "--renders", str(renders),
-                        "--gt", str(scene_dir / "test" / "images"),
-                        "--out", str(metrics_json)], cwd=REPO_ROOT, env=env, check=True)
+        _run([sys.executable, "src/render.py", "--config", str(config),
+              "--mode", "test", "--poses-csv",
+              str(scene_dir / "test" / "test_poses.csv"),
+              "--out", str(renders)], REPO_ROOT, env, log_of("render"))
+        _run([sys.executable, "src/metrics.py", "--renders", str(renders),
+              "--gt", str(scene_dir / "test" / "images"),
+              "--out", str(metrics_json)], REPO_ROOT, env, log_of("metrics"))
     else:
-        subprocess.run([sys.executable, "src/render_val.py", "--config", str(config),
-                        "--scene-dir", str(scene_dir),
-                        "--processed-root", "data/processed/phase1",
-                        "--out", str(run_dir / "renders_val_split"),
-                        "--metrics-out", str(metrics_json)],
-                       cwd=REPO_ROOT, env=env, check=True)
+        _run([sys.executable, "src/render_val.py", "--config", str(config),
+              "--scene-dir", str(scene_dir),
+              "--processed-root", "data/processed/phase1",
+              "--out", str(run_dir / "renders_val_split"),
+              "--metrics-out", str(metrics_json)],
+             REPO_ROOT, env, log_of("render_val"))
 
     d = json.loads(metrics_json.read_text())
     per = d["per_image"]
@@ -152,6 +175,9 @@ def main():
     ap.add_argument("--variants", nargs="*", help="subset of the sweep's variants")
     ap.add_argument("--dry-run", action="store_true", help="print commands, run nothing")
     ap.add_argument("--force", action="store_true", help="redo cells already in the CSV")
+    ap.add_argument("--log-dir", type=Path, default=None,
+                    help="quiet mode: per-cell train/eval logs go here instead of stdout "
+                         "(for notebook hosts whose log viewer chokes on ns-train output)")
     args = ap.parse_args()
 
     sweep = load_sweep(args.sweep)
@@ -193,12 +219,14 @@ def main():
             if training_complete(run_dir, iters):
                 print(f"== {scene}/{variant}: training complete, skipping to eval ==")
             else:
-                print(f"== {scene}/{variant}: training ({iters} iters) ==")
+                log = args.log_dir / f"{scene}_{variant}_train.log" if args.log_dir else None
+                print(f"== {scene}/{variant}: training ({iters} iters) =="
+                      + (f"  (log: {log})" if log else ""), flush=True)
                 t0 = time.time()
-                subprocess.run(cmd, cwd=REPO_ROOT, env=env, check=True)
+                _run(cmd, REPO_ROOT, env, log)
                 train_hours = (time.time() - t0) / 3600
 
-            m = evaluate(sweep, scene, variant, env)
+            m = evaluate(sweep, scene, variant, env, log_dir=args.log_dir)
             row = {"scene": scene, "exp": sweep["experiment"], "variant": variant,
                    **{k: f"{m[k]:.4f}" for k in ("psnr", "ssim", "lpips", "score")},
                    "train_hours": f"{train_hours:.2f}", "gpu": sweep["gpu"],
