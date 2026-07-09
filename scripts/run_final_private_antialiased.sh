@@ -29,7 +29,9 @@ PROCESSED_ROOT=data/processed/phase1
 RAW_ROOT=data/raw/phase1
 OUT_ROOT=runs/phase1/exp005_antialiased_dense
 MAX_ITERS=30000
-SUBMISSION_ZIP=submissions/phase1/exp002_dense_colmap_init_results/submission_round1.zip
+# NOTE: each config gets its own folder -- exp002's zip here is the scored
+# leaderboard datapoint #2 artifact; never overwrite a submitted zip.
+SUBMISSION_ZIP=submissions/phase1/exp005_antialiased_dense_results/submission_round1.zip
 
 for scene in "${SCENES[@]}"; do
   staging="$PROCESSED_ROOT/$scene/train_staging_dense"
