@@ -122,3 +122,25 @@ Format per entry: hypothesis -> what ran -> result -> decision.
   the exp008 A/B knowing masks are slightly over-eager on red.
 - Staging symlink deliberately NOT created; exp008 links masks at training
   time.
+
+## exp007_bilateral_grid + exp008_transient_mask (Week 2b, Jul 9, Kaggle)
+
+- **Hypothesis:** (007) bilateral grid compensates per-image exposure variation;
+  (008) masking people/vehicles out of the loss removes inconsistent content,
+  win expected on HCM0181.
+- **Ran:** both on Kaggle T4x2 (local 6 GB thrashed on the grid: 3.2 s/iter,
+  14x control -- killed at 59%, whole experiment re-scoped). 5 cells: HCM0181
+  control + bilateral x2 + masked x2, `kaggle-exp007-008-tierA.ipynb`, all
+  scored vgg+50 in-notebook. Controls: hcm0034 0.6548, HCM0181 0.6344 (fresh,
+  matches the antialiased proxy 0.6338).
+- **Result:** bilateral LOSES both pilots (-0.0046 / -0.0081; PSNR -0.6..-0.8
+  dB) -- same-flight DJI exposure is already consistent, the grid only eats
+  capacity/optimization budget. masked is a wash on both (-0.0005 / -0.0003)
+  -- even on the max-traffic scene; transients at this GSD are too small and
+  too sparse to matter, and the masks' static-red false positives (mast
+  beacon, parasols) cost a little valid supervision.
+- **Decision:** **drop both.** Tier-A locked config stays dense + antialiased
+  (+ splatfacto-big pending exp006 session 2). Week-3 headroom now rides on
+  capacity/iters (exp006 s2), perceptual FT (exp009), and the enhancer chain.
+  Notebook infra note: run cells must put the airace bin on subprocess PATH
+  (fixed in run_sweep 4f804f5 + notebook).

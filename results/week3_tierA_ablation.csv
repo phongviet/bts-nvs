@@ -4,3 +4,8 @@ hcm0034,exp006_capacity_iters_sweep,mcmc3M_30k,21.3635,0.7369,0.2425,0.6523,1.75
 hcm0034,exp006_capacity_iters_sweep,big_30k,21.4695,0.7410,0.2356,0.6569,2.11,rented,2026-07-08T17:53:55
 HCM0181,exp006_capacity_iters_sweep,mcmc3M_30k,20.2450,0.6991,0.2437,0.6337,1.71,rented,2026-07-08T19:38:21
 HCM0181,exp006_capacity_iters_sweep,big_30k,20.2926,0.7028,0.2396,0.6367,2.30,rented,2026-07-08T21:58:08
+HCM0181,exp007_bilateral_grid,control,20.2743,0.7017,0.2443,0.6344,1.01,rented,2026-07-09T03:43:05
+hcm0034,exp007_bilateral_grid,bilateral,20.8545,0.7353,0.2387,0.6502,1.41,rented,2026-07-09T04:07:18
+HCM0181,exp007_bilateral_grid,bilateral,19.4964,0.6904,0.2444,0.6263,1.40,rented,2026-07-09T05:09:26
+hcm0034,exp008_transient_mask,masked,21.4128,0.7391,0.2397,0.6543,1.02,rented,2026-07-09T06:13:05
+HCM0181,exp008_transient_mask,masked,20.2641,0.7011,0.2446,0.6341,1.03,rented,2026-07-09T06:13:17
