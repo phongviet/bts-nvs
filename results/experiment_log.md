@@ -89,6 +89,13 @@ Format per entry: hypothesis -> what ran -> result -> decision.
 - **Decision:** adopt `unsharp_r1_p50 + jpeg98` globally in the packaging
   path (`apply_postprocess.py`). Re-verify once on the next submission
   (delta-transfer check #2 rides on it).
+- **REVERTED (Jul 9, LB datapoint #4):** the op scored −0.00502 on the
+  leaderboard. Post-mortem: the local +0.0039 lived entirely in alex-LPIPS
+  (−0.024); the LB uses VGG (confirmed), where the op is LPIPS-neutral
+  (0.2393→0.2396) and its PSNR/SSIM costs dominate. Local vgg re-score
+  delta = −0.0050 — matches the LB delta exactly. Lesson: score all
+  decisions with vgg + psnr_max=50 (both now local defaults where it
+  counts); a win concentrated in alex-LPIPS is a red flag, not a result.
 
 ## exp012_ensemble_pilot (Week 2b, Jul 8)
 
