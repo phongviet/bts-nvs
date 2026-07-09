@@ -1,8 +1,9 @@
 # exp009 -- perceptual (LPIPS-VGG) fine-tune (plan_execution_v3 W3 D3-4).
-# Fine-tunes the best exp006/007/008 pilot checkpoint for +7k iters with the
-# LPIPS term on (splatfacto-perceptual, src/models/splatfacto_perceptual.py).
-# EDIT load_dir_template to the winning run's nerfstudio_models dir before
-# launching. iters is TOTAL steps (ns-train resumes from the loaded step, so
+# Fine-tunes the locked-config pilot checkpoint for +7k iters with the LPIPS
+# term on (splatfacto-perceptual, src/models/splatfacto_perceptual.py).
+# Base = exp004 antialiased 30k ckpts staged at runs/phase1/exp009_base/{scene}/
+# (uniform layout; on Kaggle the notebook symlinks them from the dataset).
+# If exp006 s2 adopts big+more iters, re-run FT from that ckpt in the fleet. iters is TOTAL steps (ns-train resumes from the loaded step, so
 # 37000 = 30k base + 7k fine-tune). Guard: kill if PSNR drops >0.3 dB
 # (gate_enhancer-style severe-regression rule applies at read-out).
 experiment: exp009_perceptual_ft
@@ -19,12 +20,12 @@ variants:
   lpips_w005:
     method: splatfacto-perceptual
     iters: 37000
-    load_dir_template: "runs/phase1/exp005_antialiased_dense/{scene}/splatfacto/PLACEHOLDER/nerfstudio_models"
+    load_dir_template: "runs/phase1/exp009_base/{scene}/nerfstudio_models"
     args: ["--pipeline.model.lpips-loss-weight", "0.05",
            "--pipeline.model.lpips-start-step", "30000"]
   lpips_w010:
     method: splatfacto-perceptual
     iters: 37000
-    load_dir_template: "runs/phase1/exp005_antialiased_dense/{scene}/splatfacto/PLACEHOLDER/nerfstudio_models"
+    load_dir_template: "runs/phase1/exp009_base/{scene}/nerfstudio_models"
     args: ["--pipeline.model.lpips-loss-weight", "0.1",
            "--pipeline.model.lpips-start-step", "30000"]
