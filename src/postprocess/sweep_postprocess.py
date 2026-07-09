@@ -61,7 +61,7 @@ def main():
     ap.add_argument("--ops", nargs="*", default=list(OPS.keys()))
     ap.add_argument("--encoders", nargs="*", default=["jpeg75", "jpeg90", "jpeg95", "jpeg98",
                                                       "jpeg95_444", "png"])
-    ap.add_argument("--lpips-net", default="alex")
+    ap.add_argument("--lpips-net", default="vgg")  # LB backbone, confirmed 2026-07-09
     ap.add_argument("--psnr-max", type=float, default=50.0)
     ap.add_argument("--roundtrip", action="store_true")
     args = ap.parse_args()

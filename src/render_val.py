@@ -24,7 +24,7 @@ def main():
     ap.add_argument("--processed-root", required=True, type=Path)
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--metrics-out", type=Path, default=None)
-    ap.add_argument("--lpips-net", default="alex")
+    ap.add_argument("--lpips-net", default="vgg")  # LB backbone, confirmed 2026-07-09
     ap.add_argument("--psnr-max", type=float, default=50.0)
     args = ap.parse_args()
 
