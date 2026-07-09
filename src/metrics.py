@@ -2,9 +2,12 @@
 
 Score = 0.4*(1-LPIPS) + 0.3*SSIM + 0.3*PSNR_norm
 
-PSNR_MAX (normalization constant) is unconfirmed from the official rules as of
-Week 1 (see docs/rules_and_constraints.md) -- default 40.0 dB is a placeholder,
-override with --psnr-max once confirmed.
+PSNR_MAX = 50.0, CONFIRMED 2026-07-09: solved exactly (50.0001 / 50.0000)
+from the leaderboard's per-metric breakdowns of submissions #3 and #4 --
+see results/PROGRESS.md calibration section. Per-dB score weight is thus
+0.3/50 = 0.006, not the 0.0075 assumed under the old 40.0 placeholder.
+LPIPS backbone: leaderboard values (~0.27) run ~2x local alex (~0.13),
+consistent with VGG -- see PROGRESS; prefer --lpips-net vgg for decisions.
 """
 import argparse
 import json
@@ -76,8 +79,8 @@ def main():
     ap.add_argument("--gt", required=True, type=Path, help="dir of ground-truth test images")
     ap.add_argument("--out", required=True, type=Path, help="output metrics json path")
     ap.add_argument("--lpips-net", default="alex", choices=["alex", "vgg"])
-    ap.add_argument("--psnr-max", default=40.0, type=float,
-                     help="PLACEHOLDER until confirmed from official rules")
+    ap.add_argument("--psnr-max", default=50.0, type=float,
+                     help="confirmed 2026-07-09 from leaderboard metric breakdowns")
     args = ap.parse_args()
 
     result = compute_metrics(args.renders, args.gt, args.lpips_net, args.psnr_max)

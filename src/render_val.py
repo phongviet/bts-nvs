@@ -25,7 +25,7 @@ def main():
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--metrics-out", type=Path, default=None)
     ap.add_argument("--lpips-net", default="alex")
-    ap.add_argument("--psnr-max", type=float, default=40.0)
+    ap.add_argument("--psnr-max", type=float, default=50.0)
     args = ap.parse_args()
 
     scene = args.scene_dir.name

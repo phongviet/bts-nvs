@@ -125,7 +125,7 @@ def render_union(run_dir: Path, scene: str, union_ids: set[str]) -> Path:
 def score_renders(render_dir: Path, gt_dir: Path) -> dict[str, dict]:
     """{image_name: metrics row} for every rendered val image."""
     from src.metrics import compute_metrics
-    result = compute_metrics(render_dir, gt_dir, lpips_net="alex", psnr_max=40.0)
+    result = compute_metrics(render_dir, gt_dir, lpips_net="alex", psnr_max=50.0)
     (render_dir.parent / "metrics_exp019_val.json").write_text(json.dumps(result, indent=2))
     return {r["image"]: r for r in result["per_image"] if r["image"] != "mean"}
 
