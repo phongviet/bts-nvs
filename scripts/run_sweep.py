@@ -246,6 +246,9 @@ def main():
         env = os.environ.copy()
         env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}"
         env["NERFSTUDIO_METHOD_CONFIGS"] = METHOD_CONFIGS_ENV
+        # bare `ns-train` must resolve even when the caller didn't activate the
+        # env (e.g. notebook hosts invoking this via an absolute python path)
+        env["PATH"] = f"{Path(sys.executable).parent}:{env.get('PATH', '')}"
         tag = ""
         if gpu_id is not None:
             env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
