@@ -1,19 +1,64 @@
 # bts-nvs — Viettel AI Race 2026, BTS Digital Twin (Novel View Synthesis)
 
-3D Gaussian Splatting pipeline for the BTS tower NVS competition (Phase 1).
-See `docs/strategy.md` (full method plan, aligned to `Documents/plan_overall_v2.md`) and `docs/reproducibility_checklist.md`.
+3D Gaussian Splatting + real-pixel reprojection pipeline for the BTS tower NVS
+competition (Phase 1). Scoring: `Score = 0.4·(1−LPIPS) + 0.3·SSIM + 0.3·PSNR/50`
+(LPIPS is VGG-backbone, `psnr_max=50` — both solved from leaderboard breakdowns).
 
-**Current strategy (v2):** carefully-initialized 3DGS (three init arms — sparse / dense COLMAP / VGGT-style pseudo-cloud) + MCMC backend, then a **generative stage** (post-hoc Difix3D+/SD-Turbo enhancer, with in-training pseudo-GT as a stretch goal) as the biggest LPIPS lever — *not* an exotic backend. All generative finetuning stays strictly within our own provided BTS images (no external-scene pooling).
+## Current strategy
+
+**This is a view-*interpolation* problem, not view-extrapolation.** 86–98 % of test
+frames sit sequentially adjacent to a train frame (0.2–0.5× spacing), so the highest
+lever is **reusing real train pixels and correcting the camera model**, not inventing
+detail. Two independently-measured findings overturned the original plan:
+
+- A generative post-processing/supervision stage (Difix3D+/SD-Turbo), the v1/v2
+  thesis, was a **decisive net loss** on real test GT (exp015: −0.034/−0.037) — our
+  renders are too artifact-light for a diffusion "fixer" to help.
+- The test GT is raw `SIMPLE_RADIAL` while the pose CSV omits the distortion `k`; our
+  pinhole renders were geometrically misaligned at the frame periphery. Correcting this
+  was the single biggest score jump of the whole competition.
+
+The current winning pipeline is a per-scene, embarrassingly-parallel stack, each rung
+measured on public-scene GT before scaling to the private fleet:
+
+| stage | lever | mechanism | measured LB gain |
+|---|---|---|---|
+| **Backbone** | dense-COLMAP-init `splatfacto-big` (anti-aliased / Mip) | careful init + capacity; MCMC, scale-reg, sky-mask, camera-opt all tested and dropped | baseline 57.43 |
+| **F1** | distortion remap | remap pinhole renders into the true `SIMPLE_RADIAL` geometry (no retraining) | **+16.4** → 70.45 |
+| **F2** | DIBR hybrid | warp real train pixels via 3DGS depth, occlusion z-test + photometric guard, 3DGS fills holes | **+1.8** → 72.22 |
+| **P2** | per-scene neural refiner | small U-Net, 7-ch input `[F1 render, DIBR blend, visibility mask]` → residual on DIBR, trained per-scene on held-out train views against the grader objective | **+3.2** → 75.38 (rank 9) |
+| **exp034** | full stack | single-encode JPEG q95 4:4:4, hflip TTA, ss=2 supersampled + cubic resample, `splatfacto-big` backbone, refiner v2 | **+1.26** → **76.639** |
+
+Best submission to date: **LB 76.63890** (PSNR 25.34 / SSIM 85.25 / LPIPS 10.35, all 8
+private scenes). Gap to top-1 (77.02430) = **0.385 LB pts**; remaining levers R1–R6
+(per-scene iters, refiner seed-ensemble, K-neighbor DIBR source selection, extra refiner
+channels, ss=3) are specced in `Analysis/FINAL_PLAN_top1.md`.
+
+**Compliance:** the pipeline uses only provided train images + train poses + our own
+3DGS model + provided test poses/intrinsics. No test images in training or inference, no
+external data, no pretrained enhancement nets (LPIPS-VGG is used only inside the training
+loss). Rasterizer is gsplat (allowed). Submissions are ≤ 350 MB, JPEG, exact test
+filenames — enforced by the packager.
+
+See `results/PROGRESS.md` for the full experiment ↔ leaderboard log,
+`Analysis/REPORT_winning_strategy.md` for the method write-up, and
+`Analysis/FINAL_PLAN_top1.md` for the top-1 ladder. `docs/strategy.md` preserves the
+original SOTA survey (Sections 1–6 still valid); its v2 action plan is superseded.
 
 ## Setup
 
 ```bash
-conda create -n airace python=3.10 -y
+conda env create -f environment.yml   # creates the `airace` env
 conda activate airace
+```
+
+Or from scratch:
+
+```bash
+conda create -n airace python=3.10 -y && conda activate airace
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 pip install nerfstudio gsplat
 pip install lpips torchmetrics pillow numpy pandas tqdm pyyaml opencv-python plyfile
-conda env export > environment.yml
 ```
 
 ## Data
@@ -23,22 +68,53 @@ Extract the organizers' archive into `data/raw/` (read-only, never hand-edited):
 ```
 data/raw/phase1/public_set/<scene>/train/{images,sparse/0}/
 data/raw/phase1/public_set/<scene>/test/{images,test_poses.csv}
-data/raw/phase1/private_set1/<scene>/...   # test/images GT withheld or treated as hidden
+data/raw/phase1/private_set1/<scene>/...   # test GT withheld
 ```
 
-`public_set` ships test GT images — use it to compute the real competition Score locally.
+`public_set` ships test GT — use it to compute the real competition Score locally
+(the leaderboard grades private scenes directly, so public-5 mean is the calibration
+signal: it tracks private LB within ±0.004).
 
 ## Pipeline
 
+**Baseline 3DGS backbone** (per scene):
+
 ```bash
-ns-train splatfacto --data data/raw/phase1/public_set/<scene>/train \
-  --output-dir runs/phase1/exp001_baseline_splatfacto
+ns-train splatfacto-big --data data/raw/phase1/public_set/<scene>/train \
+  --output-dir runs/phase1/<exp>_<scene>          # dense-COLMAP init, anti-aliased
 
-python src/render.py --checkpoint <ckpt> --poses <scene>/test/test_poses.csv --out runs/.../renders_test
-
-python src/metrics.py --renders runs/.../renders_test --gt <scene>/test/images --out runs/.../metrics_val.json
-
-python src/package_submission.py --runs-dir runs/phase1/exp001_baseline_splatfacto --out submissions/phase1/submission_exp001.zip
+python src/render.py  --checkpoint <ckpt> --poses <scene>/test/test_poses.csv --out <renders>
+python src/metrics.py --renders <renders> --gt <scene>/test/images --lpips-net vgg --psnr-max 50
 ```
 
-See `Documents/plan_week1.md` and `Documents/plan_week2.md` (outside this repo) for the day-by-day weekly plans, and `Documents/plan_overall_v2.md` for the current overall strategy.
+**Winning stack** (F1 remap → F2 DIBR → P2 refiner → package), driven per scene:
+
+```bash
+python Analysis/03_x4_distortion_remap.py    # F1: pinhole -> SIMPLE_RADIAL geometry
+python Analysis/04_x3_dibr_pilot.py          # F2: depth-warp real train pixels + guard
+python Analysis/10_refiner_pilot.py --config <big_ckpt> --ss 2 --sample cubic \
+  --base 48 --iters 6000 --ema 0.999 --tta   # P2: per-scene U-Net refiner (v2)
+python Analysis/14_build_v2_submission.py    # single-encode q95 4:4:4, budget-auto, per-scene fallback
+```
+
+The full 8-scene private fleet runs on Kaggle T4×2 / a rented 4090 via
+`Analysis/kaggle_exp034_fleet.py` (idempotent/resumable) and
+`scripts/build_kaggle_exp034_upload.py`. The
+builder falls back per scene (refiner v2 → v1 → DIBR → F1 remap) so partial fleets
+still ship a valid submission.
+
+## Repository layout
+
+```
+src/         model methods, render, metrics, submission packaging
+configs/     experiment configs (exp004/022/023/024/029/034 …)
+Analysis/    winning-stack scripts + reports (F1/F2/P2, refiner, JPEG-budget studies)
+scripts/     sweep runners, Kaggle upload builders, diagnostics
+docs/         strategy survey, runbook, reproducibility checklist, rules
+results/      PROGRESS.md (experiment ↔ leaderboard truth), ablation CSVs
+runs/         per-scene run metadata (heavy binaries gitignored)
+tests/        loss / method unit tests
+```
+
+Heavy artifacts (checkpoints, renders, dense point clouds, submission zips, raw data)
+are gitignored and regenerable from the pipeline above.
