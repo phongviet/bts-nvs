@@ -1,0 +1,5 @@
+scene,stage,lpips,ssim,psnr,score
+hcm0034,render_only,0.2393,0.7397,21.4281,0.6548
+hcm0034,offtheshelf,0.2666,0.6824,20.4601,0.6209
+HCM0181,render_only,0.2446,0.7005,20.2468,0.6338
+HCM0181,offtheshelf,0.2752,0.6352,19.3241,0.5964

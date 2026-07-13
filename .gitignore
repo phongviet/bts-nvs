@@ -5,8 +5,7 @@ data/processed/
 # Run artifacts — heavy binaries gitignored; small configs/metrics/logs kept
 runs/*/**/nerfstudio_models/
 runs/*/**/checkpoints/
-runs/*/**/renders_val/
-runs/*/**/renders_test/
+runs/**/renders*/
 runs/*/**/logs/tensorboard/
 runs/**/*.ckpt
 runs/**/events.out.tfevents.*
@@ -14,15 +13,27 @@ runs/**/events.out.tfevents.*
 # Submissions (zips are large; keep SUBMISSION_LOG.md only)
 submissions/**/*.zip
 
+# Analysis — keep scripts/reports/CSVs; heavy render/output dirs are regenerable
+Analysis/X1_nearest_copy/
+Analysis/X3_dibr/
+Analysis/X4_distortion_remap/
+Analysis/X5_refiner/
+Analysis/X6_jpeg_budget/
+Analysis/**/*.log
+
 # Python
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
 *.egg-info/
+.pytest_cache/
 
 # OS cruft from macOS-zipped archives
 .DS_Store
 __MACOSX/
+
+# WSL / Windows metadata sidecars
+*:Zone.Identifier
 
 # Env
 *.env

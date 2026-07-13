@@ -1,5 +1,16 @@
 # Winning the Viettel AI Race 2026 "BTS Digital Twin" NVS Competition: A Complete Method & Experiment Strategy
 
+> **Superseded (2026-07-07) by `Documents/plan_overall_v3.md`** — v3 corrects this document's central v2
+> thesis (generative post-processing as the dominant lever) after confirming this competition is a
+> view-INTERPOLATION problem, not view-extrapolation like the RealADSim reports this document is built
+> from; the generative enhancer was demoted, tested (exp015/016), and found to be a decisive net loss on
+> real test GT. This document's SOTA background (Sections 1–6) remains useful reading; its action plan
+> (Recommendations section) does not reflect current strategy — use `plan_overall_v3.md` and
+> `plan_execution_v3.md` instead. As of 2026-07-09, a 230-image weakness deep-dive
+> (`Documents/strategy_research_brief_2026-07-09.md` §5.5, artifact `weakness-analysis-v1`) found two
+> measured, previously-undocumented effects — a frame-corner reconstruction-error concentration and a
+> GT-sharpness↔PSNR (not LPIPS) correlation — now tracked as Tier-A items in `plan_overall_v3.md` §2/§8.
+>
 > **Authority note (updated per `Documents/plan_overall_v2.md`).** This document preserves the original SOTA analysis (Sections 1–6), which is still valid. The **action plan, key findings, and benchmarks below have been updated to v2**. The decisive v2 change: reading both the 2nd-place Qualcomm *and* the 1st-place XiaomiEV RealADSim-NVS reports shows two independent top-2 teams converge on the same conclusion — **a generative post-processing/supervision stage on top of plain 3DGS is the dominant lever; 3DGS backend variants are not.** v2 adds (a) a vision-only pseudo-point-cloud init (VGGT-style) as a third init arm, and (b) an in-training generative pseudo-GT pattern as a second way to apply the generative lever. See Section 7 for the consolidated additions. Day-by-day execution lives in `Documents/plan_week1.md` and `Documents/plan_week2.md`.
 
 ## TL;DR

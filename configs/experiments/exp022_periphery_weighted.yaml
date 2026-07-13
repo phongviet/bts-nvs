@@ -1,0 +1,27 @@
+# exp022 -- periphery-region-weighted L1 loss (hcm0034-only pilot, local).
+# Gated ON by exp021: the frame-corner error is top-biased (top/bottom ratio
+# 1.67, top corner is worst tile in 68-90% of images) -> overlap/frustum, not
+# symmetric lens distortion -> a per-view periphery loss weight is the indicated
+# fix. splatfacto-prw = SplatfactoPeripheryModel (src/models/splatfacto_periphery.py).
+#
+# A/B on identical code path: `control` (prw_boost 0 == stock splatfacto) vs
+# `prw_boost1` (top+corner L1 emphasis, mean-normalized). Gate: +0.002 Score.
+experiment: exp022_periphery_weighted
+results_csv: results/week3_tierA_ablation.csv
+gpu: local
+split: public_set
+scenes: [hcm0034]
+data_template: "data/processed/phase1/{scene}/train_staging_dense"
+eval: public_gt
+base_args:
+  - "--pipeline.model.rasterize-mode"
+  - "antialiased"
+variants:
+  control:
+    method: splatfacto-prw
+    iters: 30000
+    args: ["--pipeline.model.prw-boost", "0.0"]
+  prw_boost1:
+    method: splatfacto-prw
+    iters: 30000
+    args: ["--pipeline.model.prw-boost", "1.0"]

@@ -1,0 +1,25 @@
+# exp023 (LEGS) + exp024 (FreGS) + exp029 (MCMC) -- ALL arms on the SPARSE SfM
+# point cloud (colmap_train_only, ~0.18-0.22M pts), NOT the dense MVS cloud.
+# Plan changed 2026-07-11 to sparse-only for the whole notebook: tests whether the
+# loss levers + MCMC work on the cheap sparse init (skipping the dense-MVS step
+# entirely). Dense baselines for comparison come from history (exp006 mcmc-dense
+# 0.6523/0.6337; antialiased-30k control 0.6548 / big_30k 0.6569/0.6367).
+#   control       = splatfacto-legs beta=0  == stock splatfacto on sparse init (no-op control)
+#   legs          = LEGS Laplacian-weighted L1 (arXiv:2606.07932), beta=10 (paper best)
+#   fregs         = FreGS progressive frequency-reg loss (arXiv:2403.06908), weight 0.05
+#   mcmc2M_sparse = MCMC densifier on sparse init, cap 2M
+experiment: exp023_024_029_sparse_sweep
+results_csv: results/week3_tierA_ablation.csv
+gpu: rented
+split: public_set
+scenes: [hcm0034, HCM0181]
+data_template: "data/processed/phase1/{scene}/train_staging_sparse"
+eval: public_gt
+base_args:
+  - "--pipeline.model.rasterize-mode"
+  - "antialiased"
+variants:
+  control:       {method: splatfacto-legs,  iters: 30000, args: ["--pipeline.model.legs-beta", "0.0"]}
+  legs:          {method: splatfacto-legs,  iters: 30000, args: ["--pipeline.model.legs-beta", "10.0"]}
+  fregs:         {method: splatfacto-fregs, iters: 30000, args: ["--pipeline.model.freq-weight", "0.05"]}
+  mcmc2M_sparse: {method: splatfacto-mcmc,  iters: 30000, args: ["--pipeline.model.cap-max", "2000000"]}

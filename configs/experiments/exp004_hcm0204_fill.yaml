@@ -1,0 +1,19 @@
+# Fills the one gap left by exp004 (HCM0204's antialiased/scale_reg/sky_mask rows were
+# intentionally skipped once the decision was already made from 4 scenes -- see
+# plan_execution_v3.md Day-0 status audit). This produces the actual locked-config
+# (dense-COLMAP + antialiased, vanilla splatfacto, 30k) checkpoint + score for the 5th
+# public scene, closing the coverage gap noted in the 2026-07-09 weakness deep-dive
+# (results/analysis_exp020_weakness/) which had to exclude HCM0204 for lack of this
+# checkpoint. Logged as its own experiment id so exp004's original ledger rows are untouched.
+experiment: exp004_hcm0204_fill
+results_csv: results/week3_tierA_ablation.csv
+gpu: rented
+split: public_set
+scenes: [HCM0204]
+data_template: "data/processed/phase1/{scene}/train_staging_dense"
+eval: public_gt
+base_args:
+  - "--pipeline.model.rasterize-mode"
+  - "antialiased"
+variants:
+  antialiased: {method: splatfacto, iters: 30000}

@@ -50,7 +50,8 @@ sys.path.insert(0, str(REPO_ROOT))
 CSV_FIELDS = ["scene", "exp", "variant", "psnr", "ssim", "lpips", "score",
               "train_hours", "gpu", "timestamp"]
 CUSTOM_METHODS = ["splatfacto-mcmc", "splatfacto-perceptual",
-                  "splatfacto-mcmc-perceptual", "splatfacto-tpw"]
+                  "splatfacto-mcmc-perceptual", "splatfacto-tpw", "splatfacto-prw",
+                  "splatfacto-legs", "splatfacto-fregs"]
 METHOD_CONFIGS_ENV = ",".join(
     f"{m}=src.register_custom_methods:{m.replace('-', '_')}_method" for m in CUSTOM_METHODS)
 

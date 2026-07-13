@@ -1,0 +1,20 @@
+# exp034 -- private-fleet backbone upgrade: splatfacto-big on dense init.
+# Rationale: exp006 proved big > antialiased (+0.0038 mean, won both public
+# pilots) but the private fleet (exp005, what DIBR/refiner consume) is still
+# antialiased. E4 (Analysis ladder) measures how much of the gain survives
+# the DIBR+refiner pipeline before this fleet is launched.
+# Cost: 8 scenes x big_30k; ~35-45 min/scene on a rented 4090 (~5-6h total),
+# or 2 Kaggle T4x2 sessions. 30k iters: exp006 showed quiet scenes saturate
+# by 30k; the +100k option only paid on the busiest public scene (+0.0032).
+experiment: exp034_private_big_fleet
+results_csv: results/exp034_private_big_fleet.csv
+gpu: rented
+split: private_set1
+scenes: [HCM0249, HCM0254, HCM0276, HCM1439, HNI0131, HNI0265, HNI0366, HNI0437]
+data_template: "data/processed/phase1/{scene}/train_staging_dense"
+eval: val_split     # private: no GT; match-test val split (src/render_val.py)
+base_args:
+  - "--pipeline.model.rasterize-mode"
+  - "antialiased"
+variants:
+  big_30k: {method: splatfacto-big, iters: 30000}

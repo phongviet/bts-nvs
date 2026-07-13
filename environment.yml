@@ -356,4 +356,3 @@ dependencies:
       - xxhash==3.8.0
       - yourdfpy==0.0.60
       - zipp==4.1.0
-prefix: /home/phong/miniconda3/envs/airace

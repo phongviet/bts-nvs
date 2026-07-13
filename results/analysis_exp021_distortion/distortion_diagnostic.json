@@ -1,0 +1,87 @@
+{
+  "per_scene": [
+    {
+      "scene": "hcm0034",
+      "n_imgs": 60,
+      "corner_severity": 2.126990151578134,
+      "top_bot_asym": 1.5746812588820607,
+      "frac_worst_is_corner": 0.9666666666666667,
+      "frac_worst_is_top_corner": 0.7666666666666667,
+      "k": 0.007844423355270294,
+      "f": 926.1152984148432,
+      "r_corner": 0.890493978899321,
+      "corner_disp_px": 5.13001983528623,
+      "width": 1320,
+      "height": 989
+    },
+    {
+      "scene": "hcm0031",
+      "n_imgs": 50,
+      "corner_severity": 1.9535156458060754,
+      "top_bot_asym": 1.3540258107765735,
+      "frac_worst_is_corner": 0.9,
+      "frac_worst_is_top_corner": 0.68,
+      "k": 0.007864013267504627,
+      "f": 925.6781996711661,
+      "r_corner": 0.8909144639010929,
+      "corner_disp_px": 5.147689019995572,
+      "width": 1320,
+      "height": 989
+    },
+    {
+      "scene": "HCM0181",
+      "n_imgs": 60,
+      "corner_severity": 2.1482232656123332,
+      "top_bot_asym": 1.6528520196167704,
+      "frac_worst_is_corner": 0.9833333333333333,
+      "frac_worst_is_top_corner": 0.8666666666666667,
+      "k": 0.00900353942750311,
+      "f": 926.4396742100081,
+      "r_corner": 0.8901821888275699,
+      "corner_disp_px": 5.883924851066005,
+      "width": 1320,
+      "height": 989
+    },
+    {
+      "scene": "HCM0193",
+      "n_imgs": 60,
+      "corner_severity": 2.093061727310108,
+      "top_bot_asym": 1.8554062974977261,
+      "frac_worst_is_corner": 0.95,
+      "frac_worst_is_top_corner": 0.8166666666666667,
+      "k": 0.00795193982469231,
+      "f": 925.1842594361348,
+      "r_corner": 0.8913901080716501,
+      "corner_disp_px": 5.2108041605433915,
+      "width": 1320,
+      "height": 989
+    },
+    {
+      "scene": "HCM0204",
+      "n_imgs": 60,
+      "corner_severity": 2.1861550474891196,
+      "top_bot_asym": 1.9181548402113993,
+      "frac_worst_is_corner": 0.9833333333333333,
+      "frac_worst_is_top_corner": 0.9,
+      "k": 0.010009930826722385,
+      "f": 925.5139130255384,
+      "r_corner": 0.8910726088481926,
+      "corner_disp_px": 6.554707399937671,
+      "width": 1320,
+      "height": 989
+    }
+  ],
+  "corr_severity_vs_k_pearson": {
+    "r": 0.6820313993285549,
+    "p": 0.20465695778794502
+  },
+  "corr_severity_vs_k_spearman": {
+    "rho": 0.7,
+    "p": 0.1881204043741873
+  },
+  "corr_severity_vs_corner_disp_pearson": {
+    "r": 0.6803854424058545,
+    "p": 0.20619119535162336
+  },
+  "mean_top_bot_asym": 1.671024045396906
+}

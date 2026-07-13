@@ -36,6 +36,9 @@ from src.models.splatfacto_perceptual import (
     SplatfactoMCMCPerceptualModelConfig,
     SplatfactoPerceptualModelConfig,
 )
+from src.models.splatfacto_periphery import SplatfactoPeripheryModelConfig
+from src.models.splatfacto_legs import SplatfactoLEGSModelConfig
+from src.models.splatfacto_fregs import SplatfactoFreGSModelConfig
 
 
 def make_trainer_config(method_name: str, model_config, datamanager_config=None) -> TrainerConfig:
@@ -121,4 +124,19 @@ splatfacto_tpw_method = MethodSpecification(
         ),
     ),
     description="Splatfacto with test-pose-weighted train-image sampling (exp013).",
+)
+
+splatfacto_prw_method = MethodSpecification(
+    config=make_trainer_config("splatfacto-prw", SplatfactoPeripheryModelConfig()),
+    description="Splatfacto with periphery-region-weighted (top-biased) L1 loss (exp022).",
+)
+
+splatfacto_legs_method = MethodSpecification(
+    config=make_trainer_config("splatfacto-legs", SplatfactoLEGSModelConfig()),
+    description="Splatfacto with LEGS Laplacian-weighted L1 loss (exp023, arXiv:2606.07932).",
+)
+
+splatfacto_fregs_method = MethodSpecification(
+    config=make_trainer_config("splatfacto-fregs", SplatfactoFreGSModelConfig()),
+    description="Splatfacto with FreGS progressive frequency-regularization loss (exp024, arXiv:2403.06908).",
 )

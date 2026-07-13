@@ -1,7 +1,8 @@
 """exp015/exp016 inference: run Difix3D+ (nvidia/difix, HF) over a render dir.
 
 Difix is a single-step SD-Turbo-based image-to-image "fixer" (CVPR 2025,
-github.com/nv-tlabs/Difix3D). Loaded via diffusers with trust_remote_code --
+github.com/nv-tlabs/Difix3D). Loaded via the vendored pipeline_difix.py
+(the HF repo ships weights only; the pipeline class is GitHub-only) --
 FIRST RUN on a rented GPU must verify (and record in the experiment log):
   1. the pipeline signature matches the model card
      (prompt="remove degradation", num_inference_steps=1, timesteps=[199],
@@ -15,10 +16,15 @@ add the provenance row in docs/rules_and_constraints.md the day this enters
 the repo (P3 standing duty). LoRA weights from train_difix_lora.py attach via
 --lora.
 
+Env pins (Difix3D's requirements.txt; locally validated 2026-07-09): diffusers==0.25.1
+transformers==4.38.0 peft==0.9.0 huggingface-hub==0.25.1. Newer diffusers breaks twice:
+>=0.31 removed FromOriginalVAEMixin (needed by the repo's remote VAE code) and pairs with
+transformers>=4.56 which removed FLAX_WEIGHTS_NAME (imported by diffusers<0.33).
+
 Usage:
   python src/enhancer/run_difix.py --src <renders_dir> --dst <out_dir> \
       [--model nvidia/difix] [--lora runs/difix_lora/checkpoint-XXX] \
-      [--prompt "remove degradation"] [--tile 0]
+      [--prompt "remove degradation"] [--dtype fp16|fp32] [--tile 0]
 """
 import argparse
 from pathlib import Path
@@ -39,10 +45,16 @@ def pad_to_multiple(img: Image.Image, mult: int = 8) -> tuple[Image.Image, tuple
     return Image.fromarray(arr), (w, h)
 
 
-def load_pipeline(model_id: str, lora: Path | None, device: str):
-    from diffusers import DiffusionPipeline
-    pipe = DiffusionPipeline.from_pretrained(model_id, trust_remote_code=True,
-                                             torch_dtype=torch.float16)
+def load_pipeline(model_id: str, lora: Path | None, device: str,
+                  dtype: torch.dtype = torch.float16):
+    # nvidia/difix's model_index.json names DifixPipeline, a class that exists
+    # neither in diffusers nor as remote code in the HF repo -- it lives only in
+    # github.com/nv-tlabs/Difix3D (src/pipeline_difix.py), vendored here.
+    # trust_remote_code is still required: the repo's VAE is a custom
+    # AutoencoderKL subclass shipped as remote code (vae/autoencoder_kl.py).
+    from src.enhancer.pipeline_difix import DifixPipeline
+    pipe = DifixPipeline.from_pretrained(model_id, trust_remote_code=True,
+                                         torch_dtype=dtype)
     if lora is not None:
         pipe.load_lora_weights(str(lora))
         print(f"loaded LoRA weights from {lora}")
@@ -54,6 +66,11 @@ def enhance_image(pipe, img: Image.Image, prompt: str) -> Image.Image:
     padded, (w, h) = pad_to_multiple(img)
     out = pipe(prompt, image=padded, num_inference_steps=1, timesteps=[199],
                guidance_scale=0.0).images[0]
+    # fp16 NaN guard: broken-half GPUs (GTX 16xx) or fp16 VAE overflow decode to
+    # an all-black frame -- fail loudly instead of shipping garbage (use --dtype fp32).
+    arr = np.asarray(out)
+    assert arr.any() and arr.std() > 1.0, \
+        "pipeline output is (near-)black -- likely fp16 NaNs; rerun with --dtype fp32"
     if out.size != padded.size:
         # model returned a different resolution -- resize back before cropping,
         # and complain loudly: pixel alignment vs GT must be re-verified.
@@ -70,12 +87,15 @@ def main():
     ap.add_argument("--model", default="nvidia/difix")
     ap.add_argument("--lora", type=Path, default=None)
     ap.add_argument("--prompt", default="remove degradation")
+    ap.add_argument("--dtype", default="fp16", choices=("fp16", "fp32"),
+                    help="fp16 halves VRAM; fp32 if outputs come out black (NaN)")
     ap.add_argument("--quality", type=int, default=98, help="output JPEG quality")
     ap.add_argument("--limit", type=int, default=0, help="only first N images (smoke test)")
     args = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    pipe = load_pipeline(args.model, args.lora, device)
+    dtype = torch.float16 if args.dtype == "fp16" else torch.float32
+    pipe = load_pipeline(args.model, args.lora, device, dtype)
 
     args.dst.mkdir(parents=True, exist_ok=True)
     paths = sorted(p for p in args.src.iterdir()

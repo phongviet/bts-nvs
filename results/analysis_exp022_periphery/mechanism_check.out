@@ -1,0 +1,24 @@
+/home/phong/miniconda3/envs/airace/lib/python3.10/site-packages/torchvision/models/_utils.py:208: UserWarning: The parameter 'pretrained' is deprecated since 0.13 and may be removed in the future, please use 'weights' instead.
+  warnings.warn(
+/home/phong/miniconda3/envs/airace/lib/python3.10/site-packages/torchvision/models/_utils.py:223: UserWarning: Arguments other than a weight enum or `None` for 'weights' are deprecated since 0.13 and may be removed in the future. The current behavior is equivalent to passing `weights=VGG16_Weights.IMAGENET1K_V1`. You can also use `weights=VGG16_Weights.DEFAULT` to get the most up-to-date weights.
+  warnings.warn(msg)
+/home/phong/miniconda3/envs/airace/lib/python3.10/site-packages/lpips/lpips.py:107: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  self.load_state_dict(torch.load(model_path, map_location='cpu'), strict=False)
+/home/phong/Viettel_AI_Race_2026/bts-nvs/results/analysis_exp022_periphery/compare_corners.py:30: UserWarning: The given NumPy array is not writable, and PyTorch does not support non-writable tensors. This means writing to this tensor will result in undefined behavior. You may want to copy the array to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at ../torch/csrc/utils/tensor_numpy.cpp:206.)
+  def t(a): return (torch.from_numpy(a).float().permute(2,0,1)[None]/127.5-1).to(dev)
+Setting up [LPIPS] perceptual loss: trunk [vgg], v[0.1], spatial [off]
+Loading model from: /home/phong/miniconda3/envs/airace/lib/python3.10/site-packages/lpips/weights/v0.1/vgg.pth
+======================================================================
+exp022: periphery-weighted L1 read-out (hcm0034)
+======================================================================
+variant       PSNR   SSIM  LPIPS   Score  cornSev  top/bot worst=top
+control     21.433 0.7002 0.2391  0.6430    2.129    1.565       77%
+prw_boost1  21.417 0.6996 0.2397  0.6425    2.120    1.569       77%
+----------------------------------------------------------------------
+Delta Score        : -0.0005   (gate +0.0020 to promote)
+Delta corner_sev   : -0.009   (negative = corners improved, mechanism worked)
+Delta PSNR/SSIM/LPIPS: -0.015 / -0.0005 / +0.0005
+----------------------------------------------------------------------
+VERDICT: DROP
+
+Wrote /home/phong/Viettel_AI_Race_2026/bts-nvs/results/analysis_exp022_periphery/corner_comparison.json
