@@ -107,9 +107,20 @@ def main():
     ap.add_argument("--encode", choices=["knapsack", "flat"], default="knapsack",
                     help="exp037 per-image knapsack rate allocation, or the "
                          "pre-exp037 flat q95->q90 step-down")
-    ap.add_argument("--qmin", type=int, default=88, help="knapsack floor quality")
+    # qmin defaults to the SHIPPED flat quality, not to the widest range.
+    # MEASURED (Analysis/19_encode_ab.py, hcm0034, real grader): letting the
+    # knapsack drop images BELOW q95 to fund q96 elsewhere scores -0.00017 at
+    # equal bytes — the allocation proxy omits LPIPS (0.4 of Score) and LPIPS is
+    # exactly what moved against us. Flooring at the shipped q makes this
+    # non-negative BY CONSTRUCTION (no image lands below what exp034 shipped) and
+    # leaves the part that actually pays: spending the ~18 MB of headroom a
+    # whole-q ladder cannot reach (q95=321.7 MB, q96=353 MB > cap). That
+    # measures +0.00042 on the same scene, with all three metrics improving.
+    ap.add_argument("--qmin", type=int, default=95,
+                    help="knapsack floor quality — keep at the shipped flat q so "
+                         "no image can regress; lower only if the floor overruns")
     ap.add_argument("--qmax", type=int, default=98, help="knapsack ceiling quality")
-    ap.add_argument("--qstep", type=int, default=2)
+    ap.add_argument("--qstep", type=int, default=1)
     args = ap.parse_args()
     device = "cuda" if torch.cuda.is_available() else "cpu"
     out_root = REPO / "submissions/phase1" / args.out
