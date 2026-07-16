@@ -36,7 +36,10 @@ def main():
     dirs = [root / m for m in args.members]
     for d in dirs:
         assert d.is_dir(), f"missing member dir: {d}"
-    names = sorted(p.name for p in dirs[0].iterdir())
+    # members may hold both .JPG and lossless .png twins; ensemble over the
+    # names ALL members share (the .JPG set in practice)
+    names = sorted(set.intersection(*({p.name for p in d.iterdir()} for d in dirs)))
+    assert names, "no common filenames across members"
     outdir = root / args.out
     outdir.mkdir(exist_ok=True)
     for n in names:
