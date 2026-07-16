@@ -1,0 +1,2 @@
+scene,n_test,n_train,dist_frac_p50,dist_frac_p90,dist_frac_max,angle_p50,angle_p90,angle_max,min_angle_p90,frac_uncovered,n_near_min,n_near_p10,regime
+chair,58,205,0.02017,0.02537,0.04236,3.29,5.06,10.3,4.7,0.0,1,2,interpolative

@@ -8,6 +8,15 @@
 4. Leaderboard scale is ×100 of the local Score formula (e.g. 57.19840 ≙ 0.57198). Store leaderboard values verbatim; derived /100 values in parentheses.
 5. Statuses: `✅ done` · `🟢 adopted` · `🔴 dropped` · `🟡 running/partial` · `⬜ queued` · `⏸ deferred`.
 
+> **ROUND 2 (2026-07-16):** new 7-scene test set is the ONLY submission target
+> from now on (5 drone HCM scenes + indoor `bonsai`/`chair`). Facts:
+> `Analysis/ROUND2_test_set_analysis_2026-07-16.md`; plan:
+> `Analysis/PLAN_round2_2026-07-17.md`. Phase-1 public scenes stay as the local
+> GT bench; phase-1 private scenes retired (superseded plans →
+> `docs/archive_phase1/`). Local wave exp036/037/039/040 + chair/bonsai
+> launched Jul-17 (`scripts/run_local_wave_2026-07-17.sh`, logs
+> `results/local_wave_jul17/`).
+
 ---
 
 ## Table 1 — Experiments (local results)
