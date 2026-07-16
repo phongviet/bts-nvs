@@ -89,7 +89,7 @@ if [ "$USE_TRANSIENT_MASKS" = "1" ] && [ ! -d "$SCENE_ROOT/transient_masks" ]; t
 fi
 
 # --- 5. train locked config ---
-final_ckpt=$(find "$RUN_DIR" -name "step-*.ckpt" 2>/dev/null | sort | tail -1)
+final_ckpt=$(find "$RUN_DIR" -name "step-*.ckpt" 2>/dev/null | sort | tail -1 || true)
 # `|| true`: on a FRESH scene the ckpt list is empty and grep's exit-1 would
 # kill the whole run under set -e/pipefail (bit us on round-2 chair, Jul-17)
 final_step=$(echo "$final_ckpt" | grep -oE '[0-9]+' | tail -1 || true)

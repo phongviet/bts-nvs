@@ -25,8 +25,9 @@ step() {
   fi
 }
 
-# --- chair retry (dense init cached; resumes at ns-train) ---
+# --- chair + bonsai retries (dense init cached; resume at ns-train) ---
 step 80_chair_retry scripts/phase_run.sh chair all round2
+step 80b_bonsai_retry scripts/phase_run.sh bonsai all round2
 
 # --- exp036: is the tau optimum tighter than 5e-4? ---
 step 81_dibr_k5_tau2p5e-4 python Analysis/04_x3_dibr_pilot.py --scene hcm0034 --mode traincheck --K 5 --rel-tol 2.5e-4
