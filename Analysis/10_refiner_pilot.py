@@ -193,11 +193,24 @@ def load_refiner(path, device):
 
 
 # ------------------------------ stage 1: cache pairs ---------------------------
-def build_pairs(scene, K=3, tol=0.03, guard=0.18, warper_kw=None, variant="", max_pairs=0):
+def stack_channels(rgb_T, dibr, mask, evidence=None):
+    """Refiner input stack. v2 = [render 3 | DIBR 3 | have-mask 1] = 7ch.
+    v3 (exp040) appends the per-neighbour evidence (4K+1 ch). The v2 prefix is
+    kept verbatim -- _net_apply takes the residual base from channels 3:6, so
+    DIBR must stay there, and a v2 checkpoint keeps reading the same channels."""
+    ch = [rgb_T, dibr, mask[..., None]]
+    if evidence is not None:
+        ch.append(evidence)
+    return np.concatenate(ch, axis=-1).astype(np.float16)
+
+
+def build_pairs(scene, K=3, tol=0.03, guard=0.18, warper_kw=None, variant="",
+                max_pairs=0, evidence=False, rel_tol=None, flow_align=None):
     cache = OUT / scene / f"pairs{variant}"
     cache.mkdir(parents=True, exist_ok=True)
     w = Warper(scene, **(warper_kw or {}))
     w._return_mask = True
+    w._return_evidence = evidence
     # max_pairs: cap the number of leave-one-out pairs (weak-CPU hosts, e.g.
     # Kaggle). Stride-sampled over the flight order so the crops still cover
     # the whole trajectory rather than one corner of it.
@@ -215,12 +228,14 @@ def build_pairs(scene, K=3, tol=0.03, guard=0.18, warper_kw=None, variant="", ma
         fp = cache / f"{name}.npz"
         if fp.exists():
             continue
-        dibr, _, rgb_T, mask = w.synthesize(
+        res = w.synthesize(
             c2w, w.f, w.f, w.cx, w.cy, w.W_tr, w.H_tr,
             K=K, exclude_names={name}, tol=tol, out_k=out_k,
-            guard=guard, canvas_margin=cmargin)
+            guard=guard, canvas_margin=cmargin, rel_tol=rel_tol,
+            flow_align=flow_align)
+        (dibr, _, rgb_T, mask), ev = (res[:4], res[4] if evidence else None)
         tgt = w.train_img(idx)  # real distorted train image, HxWx3 float [0,1]
-        inp = np.concatenate([rgb_T, dibr, mask[..., None]], axis=-1).astype(np.float16)
+        inp = stack_channels(rgb_T, dibr, mask, ev)
         np.savez_compressed(fp, inp=inp, tgt=tgt.astype(np.float16))
         made += 1
         if made % 20 == 0:
@@ -234,7 +249,7 @@ def build_pairs(scene, K=3, tol=0.03, guard=0.18, warper_kw=None, variant="", ma
 
 # ------------------------------- stage 2: train --------------------------------
 def train(scene, cache, names, device, iters=3000, crop=256, bs=4, lr=2e-4, val_frac=0.15,
-          base=32, ema=0.0, suffix="", seed=0):
+          base=32, ema=0.0, suffix="", seed=0, blocks="conv"):
     import lpips
     # The train/val SPLIT is seeded separately (fixed) from the weight init +
     # batch order (seed): a seed-ensemble (reserve R2) must average nets that
@@ -255,7 +270,11 @@ def train(scene, cache, names, device, iters=3000, crop=256, bs=4, lr=2e-4, val_
     fit = [load(n) for n in fit_names]
     val = [load(n) for n in val_names]
 
-    net = UNet(base=base).to(device)
+    # channel count comes from the cache, not a constant: v2 pairs are 7ch and
+    # exp040 evidence pairs are 7+4K+1, and the net must match whatever the
+    # variant cache actually holds.
+    ci = fit[0][0].shape[-1]
+    net = UNet(ci=ci, base=base, blocks=blocks).to(device)
     opt = torch.optim.Adam(net.parameters(), lr=lr)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=iters, eta_min=lr * 0.05)
     lpips_fn = lpips.LPIPS(net="vgg").to(device).eval()
@@ -372,7 +391,8 @@ def _net_apply_ensemble(nets, inp, device, tta=False):
 
 
 def apply_test(scene, net, device, K=3, tol=0.03, guard=0.18,
-               warper_kw=None, variant="", suffix="", tta=False, png=False):
+               warper_kw=None, variant="", suffix="", tta=False, png=False,
+               evidence=False, rel_tol=None, flow_align=None):
     from src.metrics import compute_metrics
     scene_dir = dibr04.scene_raw(scene) / scene
     rows = load_test_poses(scene_dir / "test/test_poses.csv")
@@ -390,16 +410,23 @@ def apply_test(scene, net, device, K=3, tol=0.03, guard=0.18,
         if w is None:
             w = Warper(scene, **(warper_kw or {}))
             w._return_mask = True
+            w._return_evidence = evidence
         out_k = w.k
         cmargin = 128 if out_k < -0.05 else 0
         c2w = w._c2w_ns(r["qvec"], r["tvec"])
-        dibr, _, rgb_T, mask = w.synthesize(
+        res = w.synthesize(
             c2w, r["fx"], r["fy"], r["cx"], r["cy"], r["width"], r["height"],
-            K=K, tol=tol, out_k=out_k, guard=guard, canvas_margin=cmargin)
-        inp = np.concatenate([rgb_T, dibr, mask[..., None]], axis=-1).astype(np.float16)
-        np.savez_compressed(fp, inp=inp)
+            K=K, tol=tol, out_k=out_k, guard=guard, canvas_margin=cmargin,
+            rel_tol=rel_tol, flow_align=flow_align)
+        (dibr, _, rgb_T, mask), ev = (res[:4], res[4] if evidence else None)
+        np.savez_compressed(fp, inp=stack_channels(rgb_T, dibr, mask, ev))
     for r in rows:
         inp = np.load(icache / (r["image_name"] + ".npz"))["inp"].astype(np.float32)
+        if inp.shape[-1] != net.ci:
+            raise SystemExit(
+                f"{scene}: cache {icache.name} holds {inp.shape[-1]}ch but the net "
+                f"wants {net.ci}ch — stale cache for this variant. Delete it or "
+                f"pass the --variant/--evidence the checkpoint was trained with.")
         img = _net_apply(net, inp.transpose(2, 0, 1), device, tta=tta)
         pil = Image.fromarray((img * 255).astype(np.uint8))
         if png:  # lossless hand-off; the submission builder single-encodes JPEG
@@ -446,7 +473,22 @@ def main():
                     help="cap leave-one-out training pairs (0 = all); stride-sampled")
     ap.add_argument("--png", action="store_true",
                     help="write lossless PNG test renders (for the single-encode builder)")
+    ap.add_argument("--blocks", choices=["conv", "naf"], default="conv",
+                    help="exp040 A/B: plain double-conv blocks or NAFNet blocks "
+                         "(arXiv 2204.04676) at matched params")
+    ap.add_argument("--evidence", action="store_true",
+                    help="exp040 refiner v3: feed per-neighbour aligned warps + "
+                         "confidence maps + 3DGS depth (7+4K+1 ch) instead of 7ch")
+    ap.add_argument("--rel-tol", type=float, default=None,
+                    help="exp036 IBGS relative depth-consistency filter (passed to the Warper)")
+    ap.add_argument("--flow-align", choices=["off", "dis", "searaft"], default="off",
+                    help="exp039 flow-residual alignment of warped neighbours")
+    ap.add_argument("--flow-max-px", type=float, default=7.0)
+    ap.add_argument("--searaft-ckpt", default=None)
     args = ap.parse_args()
+    flow_align = None if args.flow_align == "off" else {
+        "backend": args.flow_align, "max_px": args.flow_max_px,
+        "searaft_ckpt": args.searaft_ckpt}
     device = "cuda" if torch.cuda.is_available() else "cpu"
     (OUT / args.scene).mkdir(parents=True, exist_ok=True)
 
@@ -460,27 +502,35 @@ def main():
             variant += "_cub"
         if args.config:
             variant += "_bb"
+        # anything that changes what the npz CONTAINS must change the cache tag,
+        # or a stale 7ch cache silently gets reused for a v3 run (and vice versa)
+        if args.evidence:
+            variant += "_ev"
+        if args.rel_tol is not None:
+            variant += f"_rt{args.rel_tol:g}"
+        if flow_align is not None:
+            variant += f"_fa{args.flow_align}{args.flow_max_px:g}"
 
     if args.load:
         ckpt = OUT / args.scene / f"refiner{args.suffix}.pt"
         if not ckpt.exists():
             ckpt = OUT / args.scene / "refiner.pt"
-        sd = torch.load(ckpt, map_location=device)
-        base = sd["d1.net.0.weight"].shape[0]
-        net = UNet(base=base).to(device)
-        net.load_state_dict(sd)
-        print(f"loaded {ckpt} (base={base})")
+        net = load_refiner(ckpt, device)
+        print(f"loaded {ckpt} (ci={net.ci} base={net.base} blocks={net.blocks_kind})")
     else:
         cache, names, _ = build_pairs(args.scene, warper_kw=warper_kw, variant=variant,
-                                      max_pairs=args.max_pairs)
+                                      max_pairs=args.max_pairs, evidence=args.evidence,
+                                      rel_tol=args.rel_tol, flow_align=flow_align)
         if args.stage == "pairs":
             return
         net = train(args.scene, cache, names, device, iters=args.iters, bs=args.bs,
-                    base=args.base, ema=args.ema, suffix=args.suffix, seed=args.seed)
+                    base=args.base, ema=args.ema, suffix=args.suffix, seed=args.seed,
+                    blocks=args.blocks)
         if args.stage == "train":
             return
     apply_test(args.scene, net, device, warper_kw=warper_kw, variant=variant,
-               suffix=args.suffix, tta=args.tta, png=args.png)
+               suffix=args.suffix, tta=args.tta, png=args.png, evidence=args.evidence,
+               rel_tol=args.rel_tol, flow_align=flow_align)
 
 
 if __name__ == "__main__":

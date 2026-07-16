@@ -172,6 +172,57 @@ def test_load_refiner_accepts_legacy_raw_state_dict(tmp_path):
     assert back.ci == 7 and back.base == 8 and back.blocks_kind == "conv"
 
 
+# --------------------------- exp040 evidence stack -----------------------------
+dibr = _load("dibr04", "Analysis/04_x3_dibr_pilot.py")
+
+
+def _evidence(n_neigh, K=3, H=8, W=10):
+    rng = np.random.default_rng(0)
+    cols = [rng.random((H, W, 3)).astype(np.float32) for _ in range(n_neigh)]
+    confs = [rng.random((H, W)).astype(np.float32) for _ in range(n_neigh)]
+    depth = rng.random((H, W)).astype(np.float32) * 10 + 1
+    return dibr.Warper._pack_evidence(cols, confs, depth, K, H, W), cols, confs
+
+
+def test_evidence_layout_and_width():
+    ev, cols, confs = _evidence(3)
+    assert ev.shape == (8, 10, 4 * 3 + 1)
+    for i in range(3):
+        assert np.allclose(ev[..., 3 * i:3 * i + 3], cols[i])
+        assert np.allclose(ev[..., 9 + i], confs[i])
+
+
+def test_evidence_pads_missing_neighbours_with_zero_confidence():
+    """Fewer than K usable neighbours must not shift the channel meaning --
+    slot i is always the i-th nearest, absent slots read as no evidence."""
+    ev, cols, _ = _evidence(1)
+    assert np.allclose(ev[..., 0:3], cols[0])
+    assert np.abs(ev[..., 3:9]).sum() == 0  # empty warp slots
+    assert np.abs(ev[..., 10:12]).sum() == 0  # their confidences
+
+
+def test_evidence_depth_is_normalised_and_bounded():
+    ev, _, _ = _evidence(3)
+    d = ev[..., -1]
+    assert 0.0 <= d.min() and d.max() <= 1.0
+    # median depth must land at ~0.5 after the /(2*median) normalisation
+    assert abs(float(np.median(d)) - 0.5) < 1e-5
+
+
+def test_evidence_stack_is_v2_prefix_compatible():
+    """v3 keeps [render|DIBR|mask] as the first 7 channels: _net_apply reads the
+    residual base from 3:6, so a layout change there would silently corrupt it."""
+    rng = np.random.default_rng(1)
+    rgb, dib = rng.random((8, 10, 3)).astype(np.float32), rng.random((8, 10, 3)).astype(np.float32)
+    mask = rng.random((8, 10)).astype(np.float32)
+    ev, _, _ = _evidence(3)
+    v2 = ref.stack_channels(rgb, dib, mask)
+    v3 = ref.stack_channels(rgb, dib, mask, ev)
+    assert v2.shape[-1] == 7 and v3.shape[-1] == 7 + 4 * 3 + 1
+    assert np.allclose(v3[..., :7], v2)
+    assert np.allclose(v3[..., 3:6].astype(np.float32), dib, atol=1e-3)
+
+
 def test_ensemble_averages_member_residuals():
     """Members share the DIBR base, so the ensemble averages RESIDUALS and clamps
     once -- not the members' already-clamped RGB (which would let one saturated

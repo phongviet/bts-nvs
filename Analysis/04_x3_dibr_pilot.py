@@ -293,6 +293,7 @@ class Warper:
         # flow alignment is supposed to move (GADA's 33% -> 79% analogue), so we
         # measure it directly rather than inferring it from the Score.
         n_depth_ok = n_guard_kept = n_flow_applied = 0
+        ev_cols, ev_confs = [], []  # exp040 per-neighbour evidence
         for i in neigh:
             name, c2w_N, cen_N = self.train[i]
             w2c = np.linalg.inv(c2w_N)
@@ -316,8 +317,11 @@ class Warper:
                 # IBGS relative depth-consistency test (exp036): scale-invariant
                 rel = np.abs(zn - zc) / (zn + zc + 1e-6)
                 visible = inb & (rel < rel_tol)
+                agree = 1.0 - rel / rel_tol
             else:
-                visible = inb & (np.abs(zn - zc) < tol * zc + 1e-4)
+                band = tol * zc + 1e-4
+                visible = inb & (np.abs(zn - zc) < band)
+                agree = 1.0 - np.abs(zn - zc) / np.maximum(band, 1e-9)
             n_depth_ok += int(visible.sum())
             col = self._sample_rgb(self.train_img(i), ud, vd)
             if flow_align is not None:
@@ -341,6 +345,14 @@ class Warper:
             wmap = (visible.astype(np.float64) * wgt)[..., None]
             num += col * wmap
             den += wmap
+            if getattr(self, "_return_evidence", False):
+                # exp040: hand the refiner the UNBLENDED per-neighbour evidence
+                # (aligned warp + its depth-agreement confidence) instead of only
+                # the collapsed weighted mean, so the net can learn WHICH
+                # neighbour to trust per pixel rather than inheriting our
+                # hand-tuned 1/distance weighting.
+                ev_cols.append(col.astype(np.float32))
+                ev_confs.append((visible * np.clip(agree, 0, 1)).astype(np.float32))
 
         warped = num / np.maximum(den, min_w)
         have = (den[..., 0] > min_w) & (acc_T > 0.5)
@@ -354,9 +366,33 @@ class Warper:
             "guard_reject_frac": (1 - n_guard_kept / n_depth_ok) if n_depth_ok else 0.0,
             "flow_applied_frac": (n_flow_applied / n_depth_ok) if n_depth_ok else 0.0,
         }
+        if getattr(self, "_return_evidence", False):
+            ev = self._pack_evidence(ev_cols, ev_confs, depth_T, K, H, W)
+            return out, float(1 - have.mean()), rgb_T, have.astype(np.float32), ev
         if getattr(self, "_return_mask", False):
             return out, float(1 - have.mean()), rgb_T, have.astype(np.float32)
         return out, float(1 - have.mean()), rgb_T
+
+    @staticmethod
+    def _pack_evidence(cols, confs, depth_T, K, H, W):
+        """exp040 evidence channels: [warp_0..warp_{K-1} (3 each) |
+        conf_0..conf_{K-1} (1 each) | normalised 3DGS depth (1)] = 4K+1.
+        Neighbours are distance-ordered by `neigh`, so slot i means the same
+        thing (i-th nearest) on every view -- the net can learn a per-slot prior.
+        Scenes with fewer than K usable neighbours get zero-filled slots, which
+        read as zero-confidence evidence."""
+        ch = []
+        for i in range(K):
+            ch.append(cols[i] if i < len(cols) else np.zeros((H, W, 3), np.float32))
+        for i in range(K):
+            ch.append((confs[i] if i < len(confs)
+                       else np.zeros((H, W), np.float32))[..., None])
+        # depth is metric and scene-scale-dependent; normalise by the view median
+        # so one refiner hyper-parameter set transfers across scenes.
+        d = depth_T.astype(np.float32)
+        med = float(np.median(d[d > 0])) if (d > 0).any() else 1.0
+        ch.append(np.clip(d / (2 * med + 1e-9), 0, 1)[..., None])
+        return np.concatenate(ch, axis=-1).astype(np.float32)
 
 
 def bilinear(img: np.ndarray, us: np.ndarray, vs: np.ndarray) -> np.ndarray:
