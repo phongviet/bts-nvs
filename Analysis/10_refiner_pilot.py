@@ -74,16 +74,85 @@ class DoubleConv(nn.Module):
         return self.net(x)
 
 
-class UNet(nn.Module):
-    def __init__(self, ci=7, co=3, base=32):
+class _LayerNorm2d(nn.Module):
+    def __init__(self, c):
         super().__init__()
-        self.d1 = DoubleConv(ci, base)
-        self.d2 = DoubleConv(base, base * 2)
-        self.d3 = DoubleConv(base * 2, base * 4)
-        self.bott = DoubleConv(base * 4, base * 4)
-        self.u3 = DoubleConv(base * 4 + base * 4, base * 2)
-        self.u2 = DoubleConv(base * 2 + base * 2, base)
-        self.u1 = DoubleConv(base + base, base)
+        self.g = nn.Parameter(torch.ones(c))
+        self.b = nn.Parameter(torch.zeros(c))
+
+    def forward(self, x):
+        mu = x.mean(1, keepdim=True)
+        var = x.var(1, keepdim=True, unbiased=False)
+        x = (x - mu) / torch.sqrt(var + 1e-6)
+        return x * self.g[None, :, None, None] + self.b[None, :, None, None]
+
+
+def _sg(x):  # SimpleGate: split channels in half, multiply
+    a, b = x.chunk(2, dim=1)
+    return a * b
+
+
+class _NAFBlock(nn.Module):
+    """One NAFNet block (Chen et al., ECCV22): activation-free, SimpleGate +
+    simplified channel attention, two residual sub-blocks (spatial + FFN)."""
+    def __init__(self, c, dw_expand=2, ffn_expand=2):
+        super().__init__()
+        dc, fc = c * dw_expand, c * ffn_expand
+        self.norm1 = _LayerNorm2d(c)
+        self.conv1 = nn.Conv2d(c, dc, 1)
+        self.conv2 = nn.Conv2d(dc, dc, 3, padding=1, groups=dc)  # depthwise
+        self.sca = nn.Sequential(nn.AdaptiveAvgPool2d(1),
+                                 nn.Conv2d(dc // 2, dc // 2, 1))
+        self.conv3 = nn.Conv2d(dc // 2, c, 1)
+        self.norm2 = _LayerNorm2d(c)
+        self.conv4 = nn.Conv2d(c, fc, 1)
+        self.conv5 = nn.Conv2d(fc // 2, c, 1)
+        self.beta = nn.Parameter(torch.zeros(1, c, 1, 1))
+        self.gamma = nn.Parameter(torch.zeros(1, c, 1, 1))
+
+    def forward(self, x):
+        p = _sg(self.conv2(self.conv1(self.norm1(x))))
+        y = self.conv3(p * self.sca(p))
+        x = x + y * self.beta
+        z = self.conv5(_sg(self.conv4(self.norm2(x))))
+        return x + z * self.gamma
+
+
+class NAFDoubleBlock(nn.Module):
+    """exp040 refiner v3 backbone block: two stacked NAFNet blocks at width `co`.
+    Drop-in for DoubleConv (same ci->co contract) so the UNet skeleton + skip
+    connections are unchanged."""
+    def __init__(self, ci, co, dw_expand=2, ffn_expand=2):
+        super().__init__()
+        self.proj_in = nn.Conv2d(ci, co, 1) if ci != co else nn.Identity()
+        self.blocks = nn.ModuleList([_NAFBlock(co, dw_expand, ffn_expand)
+                                     for _ in range(2)])
+
+    def forward(self, x):
+        x = self.proj_in(x)
+        for blk in self.blocks:
+            x = blk(x)
+        return x
+
+
+def _block(kind):
+    return NAFDoubleBlock if kind == "naf" else DoubleConv
+
+
+class UNet(nn.Module):
+    def __init__(self, ci=7, co=3, base=32, blocks="conv"):
+        super().__init__()
+        B = _block(blocks)
+        self.blocks_kind = blocks
+        self.ci = ci
+        self.base = base
+        self.d1 = B(ci, base)
+        self.d2 = B(base, base * 2)
+        self.d3 = B(base * 2, base * 4)
+        self.bott = B(base * 4, base * 4)
+        self.u3 = B(base * 4 + base * 4, base * 2)
+        self.u2 = B(base * 2 + base * 2, base)
+        self.u1 = B(base + base, base)
         self.head = nn.Conv2d(base, co, 1)
         self.pool = nn.MaxPool2d(2)
 
@@ -99,6 +168,28 @@ class UNet(nn.Module):
         u2 = F.interpolate(u2, size=c1.shape[-2:], mode="nearest")
         u1 = self.u1(torch.cat([u2, c1], 1))
         return torch.tanh(self.head(u1))  # residual in [-1,1]
+
+
+def save_refiner(net: "UNet", path):
+    """Wrapped checkpoint carrying architecture meta so any ci/base/blocks
+    combination (v3 NAFNet, extra evidence channels) reloads unambiguously."""
+    torch.save({"sd": net.state_dict(), "ci": net.ci, "base": net.base,
+                "blocks": net.blocks_kind, "fmt": "refiner-v3"}, path)
+
+
+def load_refiner(path, device):
+    """Loads both wrapped v3 checkpoints and legacy raw-state_dict v1/v2 ones
+    (conv blocks, base inferred from d1.net.0.weight, ci from its in-channels)."""
+    obj = torch.load(path, map_location=device)
+    if isinstance(obj, dict) and obj.get("fmt") == "refiner-v3":
+        net = UNet(ci=obj["ci"], base=obj["base"], blocks=obj["blocks"]).to(device)
+        net.load_state_dict(obj["sd"])
+        return net
+    # legacy raw state_dict (conv U-Net)
+    w = obj["d1.net.0.weight"]
+    net = UNet(ci=w.shape[1], base=w.shape[0], blocks="conv").to(device)
+    net.load_state_dict(obj)
+    return net
 
 
 # ------------------------------ stage 1: cache pairs ---------------------------
@@ -143,13 +234,19 @@ def build_pairs(scene, K=3, tol=0.03, guard=0.18, warper_kw=None, variant="", ma
 
 # ------------------------------- stage 2: train --------------------------------
 def train(scene, cache, names, device, iters=3000, crop=256, bs=4, lr=2e-4, val_frac=0.15,
-          base=32, ema=0.0, suffix=""):
+          base=32, ema=0.0, suffix="", seed=0):
     import lpips
-    rng = np.random.default_rng(0)
-    order = rng.permutation(len(names))
+    # The train/val SPLIT is seeded separately (fixed) from the weight init +
+    # batch order (seed): a seed-ensemble (reserve R2) must average nets that
+    # saw the SAME held-out val set, so their val_loss is comparable and no
+    # member leaks a val crop into fit. Only init/sampling vary across members.
+    split_rng = np.random.default_rng(0)
+    order = split_rng.permutation(len(names))
     n_val = max(2, int(len(names) * val_frac))
     val_names = [names[i] for i in order[:n_val]]
     fit_names = [names[i] for i in order[n_val:]]
+    rng = np.random.default_rng(seed)
+    torch.manual_seed(seed)
 
     def load(nm):
         d = np.load(cache / f"{nm}.npz")
@@ -253,6 +350,27 @@ def _net_apply(net, inp, device, tta=False):
     return pred[0, :, :H, :W].cpu().numpy().transpose(1, 2, 0)
 
 
+def _net_apply_ensemble(nets, inp, device, tta=False):
+    """Reserve R2: average the residual-on-DIBR outputs of several seed members.
+    All members share the DIBR base (x[:,3:6]); averaging their residuals is the
+    apply-time-only cost. Equivalent to averaging the final RGB since the base
+    is common."""
+    _, H, W = inp.shape
+    ph, pw = (-H) % 8, (-W) % 8
+    x = torch.from_numpy(inp[None].astype(np.float32)).to(device)
+    x = F.pad(x, (0, pw, 0, ph), mode="replicate")
+    base = x[:, 3:6]
+    with torch.no_grad():
+        res = torch.stack([n(x) for n in nets], 0).mean(0)
+        pred = (base + res).clamp(0, 1)
+        if tta:
+            xf = torch.flip(x, dims=[3])
+            resf = torch.stack([n(xf) for n in nets], 0).mean(0)
+            pf = (xf[:, 3:6] + resf).clamp(0, 1)
+            pred = 0.5 * (pred + torch.flip(pf, dims=[3]))
+    return pred[0, :, :H, :W].cpu().numpy().transpose(1, 2, 0)
+
+
 def apply_test(scene, net, device, K=3, tol=0.03, guard=0.18,
                warper_kw=None, variant="", suffix="", tta=False, png=False):
     from src.metrics import compute_metrics
@@ -312,6 +430,9 @@ def main():
     ap.add_argument("--base", type=int, default=32, help="U-Net width")
     ap.add_argument("--bs", type=int, default=4)
     ap.add_argument("--ema", type=float, default=0.0, help="EMA decay (0 = off, e.g. 0.999)")
+    ap.add_argument("--seed", type=int, default=0,
+                    help="weight-init/batch seed for a seed-ensemble member (R2); "
+                         "train/val split is fixed regardless")
     ap.add_argument("--tta", action="store_true", help="hflip self-ensemble at apply time")
     ap.add_argument("--load", action="store_true",
                     help="skip training; load refiner{suffix}.pt (or refiner.pt)")
@@ -355,7 +476,7 @@ def main():
         if args.stage == "pairs":
             return
         net = train(args.scene, cache, names, device, iters=args.iters, bs=args.bs,
-                    base=args.base, ema=args.ema, suffix=args.suffix)
+                    base=args.base, ema=args.ema, suffix=args.suffix, seed=args.seed)
         if args.stage == "train":
             return
     apply_test(args.scene, net, device, warper_kw=warper_kw, variant=variant,

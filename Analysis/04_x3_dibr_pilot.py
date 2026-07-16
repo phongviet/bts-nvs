@@ -79,6 +79,21 @@ def find_config(scene: str) -> Path:
     return hits[-1]
 
 
+_FLOW_MOD = None
+
+
+def _flow_align_mod():
+    """Lazy-load Analysis/17_flow_align.py (leading digit -> import by path)."""
+    global _FLOW_MOD
+    if _FLOW_MOD is None:
+        import importlib.util
+        p = Path(__file__).resolve().parent / "17_flow_align.py"
+        spec = importlib.util.spec_from_file_location("flow_align17", p)
+        _FLOW_MOD = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_FLOW_MOD)
+    return _FLOW_MOD
+
+
 def qvec2rotmat(q):
     w, x, y, z = q
     return np.array([
@@ -209,7 +224,7 @@ class Warper:
     # ---- the core warp ----
     def synthesize(self, c2w_T: np.ndarray, fx, fy, cx, cy, W, H,
                    K=3, exclude_names=(), tol=0.03, min_w=1e-6, out_k=None,
-                   guard=None, canvas_margin=0):
+                   guard=None, canvas_margin=0, rel_tol=None, flow_align=None):
         """out_k: if set (SIMPLE_RADIAL k), the OUTPUT image is synthesized in
         distorted geometry (matching raw DJI GT, per X4): each output pixel's ray
         is the undistorted direction, and the pinhole-rendered fallback/depth
@@ -218,7 +233,18 @@ class Warper:
         pinhole FOV, so the fallback/depth maps must be rendered on a
         (W+2m, H+2m) canvas (same focal, principal point shifted by m) or the
         periphery edge-replicates (the streaking script 08 fixed). Applies only
-        when out_k is set; m=0 is the original behavior for positive-k scenes."""
+        when out_k is set; m=0 is the original behavior for positive-k scenes.
+        rel_tol: exp036 (IBGS relative depth-consistency filter, arXiv 2511.14357).
+        When set, the occlusion z-test becomes the scale-invariant per-pixel
+        |z_neigh - z_cam| / (z_neigh + z_cam) < rel_tol instead of the absolute
+        band tol*z + 1e-4. It is a per-pixel z-margin: near geometry gets a
+        tighter tolerance, far geometry a looser one, so distant background does
+        not leak while thin near structures are kept. None = original tol path.
+        flow_align: exp039 (Wave 1). None disables. A dict
+        {backend, max_px, searaft_ckpt} enabling flow-residual alignment of each
+        warped neighbour to the 3DGS render before the guard/blend, recovering
+        few-pixel-displaced real texture the guard would otherwise reject
+        (train-free GADA-offset approximation, see Analysis/17_flow_align.py)."""
         m = int(canvas_margin) if out_k is not None else 0
         ss = self.ss
         We, He = W + 2 * m, H + 2 * m
@@ -262,6 +288,11 @@ class Warper:
         neigh = [i for i in cand if self.train[i][0] not in exclude_names][:K]
 
         num = np.zeros((H, W, 3)); den = np.zeros((H, W, 1))
+        # exp039 instrumentation: how many depth-consistent warped samples does
+        # the photometric guard throw away? That rejection rate is the mechanism
+        # flow alignment is supposed to move (GADA's 33% -> 79% analogue), so we
+        # measure it directly rather than inferring it from the Score.
+        n_depth_ok = n_guard_kept = n_flow_applied = 0
         for i in neigh:
             name, c2w_N, cen_N = self.train[i]
             w2c = np.linalg.inv(c2w_N)
@@ -281,14 +312,31 @@ class Warper:
                    & (ud >= 1) & (ud < self.W_tr - 2) & (vd >= 1) & (vd < self.H_tr - 2))
             dN = self.train_depth(i)
             zn = bilinear(dN[..., None], uu, vu)[..., 0]
-            visible = inb & (np.abs(zn - zc) < tol * zc + 1e-4)
+            if rel_tol is not None:
+                # IBGS relative depth-consistency test (exp036): scale-invariant
+                rel = np.abs(zn - zc) / (zn + zc + 1e-6)
+                visible = inb & (rel < rel_tol)
+            else:
+                visible = inb & (np.abs(zn - zc) < tol * zc + 1e-4)
+            n_depth_ok += int(visible.sum())
             col = self._sample_rgb(self.train_img(i), ud, vd)
+            if flow_align is not None:
+                # align the warped neighbour to the 3DGS render (few-px offset
+                # recovery) BEFORE the guard, so displaced-but-valid texture is
+                # snapped back into agreement instead of rejected.
+                fa = _flow_align_mod()
+                col, applied = fa.align_to_reference(
+                    col, rgb_T, max_px=flow_align.get("max_px", 7.0),
+                    backend=flow_align.get("backend", "dis"),
+                    searaft_ckpt=flow_align.get("searaft_ckpt"))
+                n_flow_applied += int((applied > 0.5)[visible].sum())
             if guard is not None:
                 # photometric guard: reject warped samples that disagree with the
                 # (aligned, if blurry) 3DGS render — kills thin-structure ghosting
                 # from unreliable expected-depth. Biases toward the 3DGS baseline,
                 # making DIBR >= baseline by construction.
                 visible = visible & (np.abs(col - rgb_T).mean(axis=-1) < guard)
+            n_guard_kept += int(visible.sum())
             wgt = 1.0 / (np.linalg.norm(cen_N - center_T) + 1e-6)
             wmap = (visible.astype(np.float64) * wgt)[..., None]
             num += col * wmap
@@ -301,6 +349,11 @@ class Warper:
         alpha = cv2.blur(have.astype(np.float32), (7, 7))[..., None]
         out = alpha * np.where(have[..., None], warped, rgb_T) + (1 - alpha) * rgb_T
         out = np.clip(out, 0, 1)
+        self.last_stats = {
+            "depth_ok_frac": n_depth_ok / max(H * W * max(len(neigh), 1), 1),
+            "guard_reject_frac": (1 - n_guard_kept / n_depth_ok) if n_depth_ok else 0.0,
+            "flow_applied_frac": (n_flow_applied / n_depth_ok) if n_depth_ok else 0.0,
+        }
         if getattr(self, "_return_mask", False):
             return out, float(1 - have.mean()), rgb_T, have.astype(np.float32)
         return out, float(1 - have.mean()), rgb_T
@@ -326,6 +379,15 @@ def main():
     ap.add_argument("--mode", choices=["traincheck", "test"], default="traincheck")
     ap.add_argument("--K", type=int, default=3)
     ap.add_argument("--tol", type=float, default=0.03)
+    ap.add_argument("--rel-tol", type=float, default=None,
+                    help="exp036 IBGS relative depth-consistency filter "
+                         "|zn-zc|/(zn+zc) < rel_tol (e.g. 1e-3); overrides --tol")
+    ap.add_argument("--flow-align", choices=["off", "dis", "searaft"], default="off",
+                    help="exp039 flow-residual alignment of warped neighbours "
+                         "before the guard (dis=classical/weightless, searaft=needs ckpt)")
+    ap.add_argument("--flow-max-px", type=float, default=7.0,
+                    help="clamp on the alignment flow magnitude (GADA sigma_max=7)")
+    ap.add_argument("--searaft-ckpt", default=None, help="SEA-RAFT checkpoint (flow-align=searaft)")
     ap.add_argument("--n-check", type=int, default=5)
     ap.add_argument("--no-distort", action="store_true",
                     help="output pinhole geometry instead of SIMPLE_RADIAL (pre-X4 behavior)")
@@ -341,6 +403,12 @@ def main():
     ap.add_argument("--config", default=None, help="override backbone checkpoint dir/config.yml")
     ap.add_argument("--vtag", default="", help="extra output-dir tag for A/B variants")
     args = ap.parse_args()
+
+    flow_align = None if args.flow_align == "off" else {
+        "backend": args.flow_align, "max_px": args.flow_max_px,
+        "searaft_ckpt": args.searaft_ckpt}
+    if args.flow_align == "searaft" and not args.searaft_ckpt:
+        ap.error("--flow-align searaft requires --searaft-ckpt")
 
     w = Warper(args.scene, config_path=args.config, ss=args.ss, sample=args.sample)
     out_k = None if args.no_distort else w.k
@@ -358,34 +426,50 @@ def main():
             out, fallback_frac, rgb_T = w.synthesize(
                 c2w, w.f, w.f, w.cx, w.cy, w.W_tr, w.H_tr,
                 K=args.K, exclude_names={name}, tol=args.tol, out_k=out_k,
-                guard=args.guard, canvas_margin=cmargin)
+                guard=args.guard, canvas_margin=cmargin, rel_tol=args.rel_tol,
+                flow_align=flow_align)
             H, W_ = gt.shape[:2]
             sl = (slice(int(H * .2), int(H * .8)), slice(int(W_ * .2), int(W_ * .8)))
             p_warp, p_3dgs = psnr(out[sl], gt[sl]), psnr(rgb_T[sl], gt[sl])
-            rows.append((name, p_warp, p_3dgs, fallback_frac))
+            st = w.last_stats
+            rows.append((name, p_warp, p_3dgs, fallback_frac, st))
             print(f"{name}: center-PSNR warp={p_warp:.2f} vs 3dgs={p_3dgs:.2f} "
-                  f"(fallback {fallback_frac*100:.1f}%)")
+                  f"(fallback {fallback_frac*100:.1f}%, guard-reject "
+                  f"{st['guard_reject_frac']*100:.1f}%, flow-applied "
+                  f"{st['flow_applied_frac']*100:.1f}%)")
             d = OUT / args.scene / "traincheck"
             d.mkdir(parents=True, exist_ok=True)
             Image.fromarray((out * 255).astype(np.uint8)).save(d / f"warp_{name}")
         mean_w = np.mean([r[1] for r in rows]); mean_g = np.mean([r[2] for r in rows])
         print(f"\nMEAN center-PSNR: warp={mean_w:.2f} vs 3dgs={mean_g:.2f} "
               f"({'WARP WINS' if mean_w > mean_g else 'warp loses'})")
+        print(f"MEAN guard-reject={np.mean([r[4]['guard_reject_frac'] for r in rows])*100:.1f}% "
+              f"flow-applied={np.mean([r[4]['flow_applied_frac'] for r in rows])*100:.1f}% "
+              f"(flow_align={args.flow_align})")
         return
 
     # test mode: full 60 views + scoring
     from src.metrics import compute_metrics
     rows = load_test_poses(w.scene_dir / "test/test_poses.csv")
-    tag = (f"_g{args.guard}" if args.guard is not None else "") + args.vtag
+    tag = (f"_g{args.guard}" if args.guard is not None else "")
+    if args.rel_tol is not None:
+        tag += f"_rt{args.rel_tol:g}"
+    if args.K != 3:
+        tag += f"_K{args.K}"
+    if flow_align is not None:
+        tag += f"_fa{args.flow_align}{args.flow_max_px:g}"
+    tag += args.vtag
     rdir = OUT / args.scene / f"renders{tag}"
     rdir.mkdir(parents=True, exist_ok=True)
-    fb = []
+    fb, grj = [], []
     for r in rows:
         c2w = w._c2w_ns(r["qvec"], r["tvec"])
         out, fallback_frac, _ = w.synthesize(c2w, r["fx"], r["fy"], r["cx"], r["cy"],
                                              r["width"], r["height"], K=args.K, tol=args.tol,
-                                             out_k=out_k, guard=args.guard, canvas_margin=cmargin)
+                                             out_k=out_k, guard=args.guard, canvas_margin=cmargin,
+                                             rel_tol=args.rel_tol, flow_align=flow_align)
         fb.append(fallback_frac)
+        grj.append(w.last_stats["guard_reject_frac"])
         Image.fromarray((out * 255).astype(np.uint8)).save(rdir / r["image_name"], quality=98)
         print(f"{r['image_name']} fallback={fallback_frac*100:.1f}%")
     gt_dir = w.scene_dir / "test/images"
@@ -393,7 +477,10 @@ def main():
         # private scene: no test GT to score against; renders are the deliverable
         (OUT / args.scene / f"metrics{tag}.json").write_text(json.dumps(
             {"mean": None, "mean_fallback_frac": float(np.mean(fb)),
+             "mean_guard_reject_frac": float(np.mean(grj)),
              "K": args.K, "tol": args.tol, "guard": args.guard,
+             "rel_tol": args.rel_tol, "flow_align": args.flow_align,
+             "flow_max_px": args.flow_max_px,
              "note": "private scene, no GT"}, indent=2))
         print(f"\n{args.scene} DIBR: {len(rows)} views rendered to {rdir} "
               f"(no GT; mean fallback {np.mean(fb)*100:.1f}%)")
@@ -402,10 +489,14 @@ def main():
     m = res["mean"]
     (OUT / args.scene / f"metrics{tag}.json").write_text(json.dumps(
         {"mean": m, "mean_fallback_frac": float(np.mean(fb)),
-         "K": args.K, "tol": args.tol, "guard": args.guard}, indent=2))
+         "mean_guard_reject_frac": float(np.mean(grj)),
+         "K": args.K, "tol": args.tol, "guard": args.guard,
+         "rel_tol": args.rel_tol, "flow_align": args.flow_align,
+         "flow_max_px": args.flow_max_px}, indent=2))
     print(f"\n{args.scene} DIBR: PSNR={m['psnr']:.3f} SSIM={m['ssim']:.4f} "
           f"LPIPS={m['lpips']:.4f} Score={m['score']:.4f} "
-          f"(mean fallback {np.mean(fb)*100:.1f}%)")
+          f"(mean fallback {np.mean(fb)*100:.1f}%, "
+          f"guard-reject {np.mean(grj)*100:.1f}%)")
 
 
 if __name__ == "__main__":

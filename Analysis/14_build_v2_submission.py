@@ -30,9 +30,15 @@ from PIL import Image
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-spec = importlib.util.spec_from_file_location("ref10", REPO / "Analysis/10_refiner_pilot.py")
-ref10 = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(ref10)
+def _load_by_path(mod: str, rel: str):
+    spec = importlib.util.spec_from_file_location(mod, REPO / rel)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+ref10 = _load_by_path("ref10", "Analysis/10_refiner_pilot.py")
+knap16 = _load_by_path("knap16", "Analysis/16_encode_knapsack.py")
 
 X5 = REPO / "Analysis/X5_refiner"
 X3 = REPO / "Analysis/X3_dibr"
@@ -62,9 +68,7 @@ def apply_v2(scene: str, suffix: str, variant: str, device) -> list[tuple[str, I
     files = sorted(icache.glob("*.npz"))
     if not (ckpt.exists() and files):
         return None
-    sd = torch.load(ckpt, map_location=device)
-    net = ref10.UNet(base=sd["d1.net.0.weight"].shape[0]).to(device)
-    net.load_state_dict(sd); net.eval()
+    net = ref10.load_refiner(ckpt, device)  # handles v3-wrapped and legacy raw sd
     out = []
     for fp in files:
         inp = np.load(fp)["inp"].astype(np.float32).transpose(2, 0, 1)
@@ -100,6 +104,12 @@ def main():
     ap.add_argument("--suffix", default="_v2")
     ap.add_argument("--variant", default="_ss2_cub")
     ap.add_argument("--out", default="exp034_v2_results")
+    ap.add_argument("--encode", choices=["knapsack", "flat"], default="knapsack",
+                    help="exp037 per-image knapsack rate allocation, or the "
+                         "pre-exp037 flat q95->q90 step-down")
+    ap.add_argument("--qmin", type=int, default=88, help="knapsack floor quality")
+    ap.add_argument("--qmax", type=int, default=98, help="knapsack ceiling quality")
+    ap.add_argument("--qstep", type=int, default=2)
     args = ap.parse_args()
     device = "cuda" if torch.cuda.is_available() else "cpu"
     out_root = REPO / "submissions/phase1" / args.out
@@ -124,20 +134,42 @@ def main():
             imgs = fallback_images(s)
         per_scene[s] = imgs
 
-    # 2) budget-fit the PRIVATE set (the LB zip): max q at 4:4:4 under budget
-    q = 95
-    while q >= 90:
-        total = 0
-        enc_priv = {}
-        for s in PRIVATE:
-            enc_priv[s] = encode_all(per_scene[s], q)
-            total += sum(len(b) for b in enc_priv[s].values())
-        print(f"  q{q}_sub0: private total {total/1e6:.1f} MB")
-        if total / 1e6 <= BUDGET_MB:
-            break
-        q -= 1
+    # 2) budget-fit the PRIVATE set (the LB zip) at 4:4:4 under BUDGET_MB.
+    if args.encode == "knapsack":
+        # exp037: allocate the byte budget ACROSS all private images at once, so
+        # busy frames (where JPEG costs real Score) buy quality from flat sky
+        # frames that give it up for free. Strictly dominates one flat q for the
+        # whole set: the flat q IS in the feasible set the greedy searches over.
+        pooled = [(f"{s}/{name}", im) for s in PRIVATE for name, im in per_scene[s]]
+        alloc = knap16.allocate(pooled, int(BUDGET_MB * 1e6),
+                                qualities=range(args.qmin, args.qmax + 1, args.qstep),
+                                subsampling=0, tune="ms-ssim")
+        enc_priv = {s: {} for s in PRIVATE}
+        for key, (data, _q) in alloc.items():
+            s, name = key.split("/", 1)
+            enc_priv[s][name] = data
+        qs = sorted(q for _, q in alloc.values())
+        q = f"knap-q{qs[0]}..{qs[-1]}"
+        total = sum(len(b) for d in enc_priv.values() for b in d.values())
+        print(f"  knapsack: private total {total/1e6:.1f} MB, q range {qs[0]}-{qs[-1]}")
+        if total / 1e6 > BUDGET_MB:
+            raise SystemExit(f"knapsack floor q{args.qmin} = {total/1e6:.1f} MB exceeds "
+                             f"{BUDGET_MB} MB budget — lower --qmin")
     else:
-        raise SystemExit("could not fit budget even at q90")
+        q = 95
+        while q >= 90:
+            total = 0
+            enc_priv = {}
+            for s in PRIVATE:
+                enc_priv[s] = encode_all(per_scene[s], q)
+                total += sum(len(b) for b in enc_priv[s].values())
+            print(f"  q{q}_sub0: private total {total/1e6:.1f} MB")
+            if total / 1e6 <= BUDGET_MB:
+                break
+            q -= 1
+        else:
+            raise SystemExit("could not fit budget even at q90")
+        q = f"q{q}"
 
     # 3) stage: private at chosen q, public at q90 (ungraded on the LB; keeps
     #    any hypothetical full-zip variant small)
@@ -168,7 +200,8 @@ def main():
                     zout.writestr(info, zin.read(info))
 
     pz = out_root / "partial_private_set1.zip"
-    print(f"\n{n_v2}/13 scenes on v2. Private zip {pz} = {pz.stat().st_size/1e6:.0f} MB @ q{q}_sub0")
+    print(f"\n{n_v2}/13 scenes on v2. Private zip {pz} = "
+          f"{pz.stat().st_size/1e6:.0f} MB @ {q}_sub0 ({args.encode})")
     print(f"Full zip {final} = {final.stat().st_size/1e6:.0f} MB")
 
 

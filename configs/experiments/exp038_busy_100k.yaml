@@ -1,0 +1,23 @@
+# exp038 (Wave-0 reserve R1) -- 100k-iter big backbones for the two weakest
+# busy private scenes. exp006 showed busy/cluttered scenes keep improving past
+# 30k (HCM0181 +0.0032 at 100k) while quiet scenes saturate, and E4 measured
+# that backbone gain COMPOUNDS through DIBR depth/warp quality on busy scenes
+# (+0.0113 on HCM0181, fallback 19.2%->12.4%). HCM0249 and HNI0265 are the two
+# lowest-scoring private scenes (exp034 val_loss 0.0956 / 0.092 -- top of band),
+# so they are the highest-leverage 100k targets. Only 2 scenes -> fits one
+# Kaggle T4x2 session (~6 h/scene) under the ~30 GPU-h/wk/account cap.
+#
+# After training, re-run DIBR (ss2+cubic) + refiner on top; run_v2_fleet.sh
+# auto-uses the new checkpoint dir when present (per-scene).
+experiment: exp038_busy_100k
+results_csv: results/exp038_busy_100k.csv
+gpu: rented
+split: private_set1
+scenes: [HCM0249, HNI0265]
+data_template: "data/processed/phase1/{scene}/train_staging_dense"
+eval: val_split     # private: no GT; match-test val split (src/render_val.py)
+base_args:
+  - "--pipeline.model.rasterize-mode"
+  - "antialiased"
+variants:
+  big_100k: {method: splatfacto-big, iters: 100000}
