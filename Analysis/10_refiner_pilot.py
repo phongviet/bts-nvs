@@ -205,7 +205,8 @@ def stack_channels(rgb_T, dibr, mask, evidence=None):
 
 
 def build_pairs(scene, K=3, tol=0.03, guard=0.18, warper_kw=None, variant="",
-                max_pairs=0, evidence=False, rel_tol=None, flow_align=None):
+                max_pairs=0, evidence=False, rel_tol=None, flow_align=None,
+                exposure=False):
     cache = OUT / scene / f"pairs{variant}"
     cache.mkdir(parents=True, exist_ok=True)
     w = Warper(scene, **(warper_kw or {}))
@@ -232,7 +233,7 @@ def build_pairs(scene, K=3, tol=0.03, guard=0.18, warper_kw=None, variant="",
             c2w, w.f, w.f, w.cx, w.cy, w.W_tr, w.H_tr,
             K=K, exclude_names={name}, tol=tol, out_k=out_k,
             guard=guard, canvas_margin=cmargin, rel_tol=rel_tol,
-            flow_align=flow_align)
+            flow_align=flow_align, exposure=exposure)
         (dibr, _, rgb_T, mask), ev = (res[:4], res[4] if evidence else None)
         tgt = w.train_img(idx)  # real distorted train image, HxWx3 float [0,1]
         inp = stack_channels(rgb_T, dibr, mask, ev)
@@ -392,7 +393,7 @@ def _net_apply_ensemble(nets, inp, device, tta=False):
 
 def apply_test(scene, net, device, K=3, tol=0.03, guard=0.18,
                warper_kw=None, variant="", suffix="", tta=False, png=False,
-               evidence=False, rel_tol=None, flow_align=None):
+               evidence=False, rel_tol=None, flow_align=None, exposure=False):
     from src.metrics import compute_metrics
     scene_dir = dibr04.scene_raw(scene) / scene
     rows = load_test_poses(scene_dir / "test/test_poses.csv")
@@ -417,7 +418,7 @@ def apply_test(scene, net, device, K=3, tol=0.03, guard=0.18,
         res = w.synthesize(
             c2w, r["fx"], r["fy"], r["cx"], r["cy"], r["width"], r["height"],
             K=K, tol=tol, out_k=out_k, guard=guard, canvas_margin=cmargin,
-            rel_tol=rel_tol, flow_align=flow_align)
+            rel_tol=rel_tol, flow_align=flow_align, exposure=exposure)
         (dibr, _, rgb_T, mask), ev = (res[:4], res[4] if evidence else None)
         np.savez_compressed(fp, inp=stack_channels(rgb_T, dibr, mask, ev))
     for r in rows:
@@ -484,6 +485,8 @@ def main():
     ap.add_argument("--flow-align", choices=["off", "dis", "searaft"], default="off",
                     help="exp039 flow-residual alignment of warped neighbours")
     ap.add_argument("--flow-max-px", type=float, default=7.0)
+    ap.add_argument("--exposure", action="store_true",
+                    help="exp040/IBGS per-neighbour affine exposure correction")
     ap.add_argument("--searaft-ckpt", default=None)
     args = ap.parse_args()
     flow_align = None if args.flow_align == "off" else {
@@ -510,6 +513,8 @@ def main():
             variant += f"_rt{args.rel_tol:g}"
         if flow_align is not None:
             variant += f"_fa{args.flow_align}{args.flow_max_px:g}"
+        if args.exposure:
+            variant += "_ex"
 
     if args.load:
         ckpt = OUT / args.scene / f"refiner{args.suffix}.pt"
@@ -520,7 +525,8 @@ def main():
     else:
         cache, names, _ = build_pairs(args.scene, warper_kw=warper_kw, variant=variant,
                                       max_pairs=args.max_pairs, evidence=args.evidence,
-                                      rel_tol=args.rel_tol, flow_align=flow_align)
+                                      rel_tol=args.rel_tol, flow_align=flow_align,
+                                      exposure=args.exposure)
         if args.stage == "pairs":
             return
         net = train(args.scene, cache, names, device, iters=args.iters, bs=args.bs,
@@ -530,7 +536,7 @@ def main():
             return
     apply_test(args.scene, net, device, warper_kw=warper_kw, variant=variant,
                suffix=args.suffix, tta=args.tta, png=args.png, evidence=args.evidence,
-               rel_tol=args.rel_tol, flow_align=flow_align)
+               rel_tol=args.rel_tol, flow_align=flow_align, exposure=args.exposure)
 
 
 if __name__ == "__main__":

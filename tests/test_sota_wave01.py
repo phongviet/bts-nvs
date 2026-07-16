@@ -141,6 +141,102 @@ def test_max_px_clamp_bounds_the_correction():
     assert np.abs(aligned - ref_).mean() > 0.01
 
 
+# -------------------------- exp040 exposure correction -------------------------
+def test_exposure_fit_recovers_a_global_gain():
+    rng = np.random.default_rng(0)
+    ref = rng.random((32, 40, 3)).astype(np.float32) * 0.6 + 0.2
+    src = np.clip(ref * 1.15, 0, 1)  # neighbour auto-exposed brighter
+    mask = np.ones((32, 40), bool)
+    got = dibr._fit_exposure(src, ref, mask)
+    assert np.abs(got - ref).mean() < np.abs(src - ref).mean() / 5
+
+
+def test_exposure_fit_is_skipped_on_thin_evidence():
+    """A fit from a handful of pixels is noise; leaving the warp untouched is
+    the safer default."""
+    rng = np.random.default_rng(0)
+    ref = rng.random((32, 40, 3)).astype(np.float32)
+    src = rng.random((32, 40, 3)).astype(np.float32)
+    mask = np.zeros((32, 40), bool)
+    mask[:2, :3] = True
+    assert np.allclose(dibr._fit_exposure(src, ref, mask), src)
+
+
+def test_exposure_fit_ignores_pixels_outside_the_mask():
+    """The fit must use only depth-consistent pixels -- occluded junk in the
+    warp must not drag the correction."""
+    rng = np.random.default_rng(0)
+    ref = rng.random((32, 40, 3)).astype(np.float32) * 0.5 + 0.25
+    src = np.clip(ref * 1.1, 0, 1)
+    mask = np.zeros((32, 40), bool)
+    mask[:20] = True
+    junk = src.copy()
+    junk[20:] = 0.0  # garbage only where mask is False
+    a = dibr._fit_exposure(src, ref, mask)[:20]
+    b = dibr._fit_exposure(junk, ref, mask)[:20]
+    assert np.allclose(a, b, atol=1e-5)
+
+
+def test_exposure_gain_is_clamped():
+    """An extreme gain means the fit is wrong, not that the scene is 8x brighter;
+    clamping keeps a bad fit from being worse than no correction."""
+    rng = np.random.default_rng(0)
+    src = (rng.random((32, 40, 3)).astype(np.float32) * 0.05 + 0.02)
+    ref = np.clip(src * 8.0, 0, 1)
+    got = dibr._fit_exposure(src, ref, np.ones((32, 40), bool), max_gain=1.25)
+    # gain clamped to 1.25 -> cannot reach an 8x-brighter reference
+    assert np.abs(got - ref).mean() > 0.05
+
+
+# --------------------------- exp041 depth import -------------------------------
+imp = _load("imp18", "Analysis/18_import_depth.py")
+
+
+def _depth_field(H=48, W=64):
+    """A plausible z-depth map: nearer at the bottom, plus some structure."""
+    gy, gx = np.mgrid[0:H, 0:W]
+    return (12.0 - 6.0 * gy / H + 0.6 * np.sin(gx / 5.0)).astype(np.float32)
+
+
+def test_check_depth_accepts_a_matching_export():
+    ours = _depth_field()
+    theirs = ours + np.random.default_rng(0).normal(0, 0.02, ours.shape).astype(np.float32)
+    assert imp.check_depth(ours, theirs) == []
+
+
+def test_check_depth_flags_scale_mismatch():
+    """Their repo renormalising the COLMAP scene is the most likely failure and
+    the most silent: every z-test then compares metres to arbitrary units."""
+    ours = _depth_field()
+    problems = imp.check_depth(ours, ours * 2.5)
+    assert any("scale mismatch" in p for p in problems)
+
+
+def test_check_depth_flags_disparity_export():
+    ours = _depth_field()
+    problems = imp.check_depth(ours, (1.0 / ours).astype(np.float32))
+    assert problems  # inverse depth must never pass silently
+
+
+def test_check_depth_flags_ray_distance_instead_of_z():
+    """Range-from-centre grows off-axis; it looks almost right on-axis, so only
+    the radial trend catches it."""
+    H, W = 48, 64
+    ours = _depth_field(H, W)
+    gy, gx = np.mgrid[0:H, 0:W]
+    f = 50.0
+    theirs = (ours * np.sqrt(1 + ((gx - W / 2) ** 2 + (gy - H / 2) ** 2) / f ** 2)).astype(np.float32)
+    problems = imp.check_depth(ours, theirs)
+    assert any("RAY DISTANCE" in p for p in problems)
+
+
+def test_check_depth_flags_shape_and_nan():
+    ours = _depth_field()
+    assert any("shape" in p for p in imp.check_depth(ours, ours[:, :10]))
+    bad = ours.copy(); bad[0, 0] = np.nan
+    assert any("NaN" in p for p in imp.check_depth(ours, bad))
+
+
 # ------------------------------ exp040 refiner ---------------------------------
 @pytest.mark.parametrize("blocks", ["conv", "naf"])
 @pytest.mark.parametrize("ci", [7, 16])

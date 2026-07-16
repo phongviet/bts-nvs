@@ -1,0 +1,50 @@
+# exp042 (Wave 3) -- 3DGUT pilot (arXiv 2412.12507, CVPR25).
+#
+# WHY: 3DGUT replaces the EWA-splat projection with an Unscented Transform, so
+# the camera model enters the rasteriser EXACTLY instead of via a local affine
+# approximation. Our scenes are SIMPLE_RADIAL with k as low as -0.115 (HNI0131,
+# HNI0265) -- precisely where the affine approximation is worst -- and today we
+# pay for that twice: once in render quality, and again in the F1 distortion
+# remap (pinhole -> SIMPLE_RADIAL resampling), which 3DGUT could make redundant
+# by rendering the distorted model directly.
+#
+# WHY IT IS A PILOT, NOT A WAVE-0 ITEM: 3DGUT lands in gsplat only on the MCMC
+# densification path, so this is NOT an isolated change -- it swaps projection
+# AND densification at once vs our splatfacto-big baseline. exp006 showed
+# splatfacto-big's densification is worth a lot on busy scenes, so MCMC could
+# easily give back more than the UT wins. Two scenes only, and it must clear the
+# revert bar below before any thought of a fleet-wide rerun.
+#
+# SCENES: HNI0131 (k=-0.115, the strongest-distortion scene = best case for the
+# UT) and HCM0181 (busy, k mild = where MCMC-vs-big-densification is most likely
+# to hurt). Together they bound the outcome instead of flattering it.
+#
+# REVERT BAR (from PLAN_sota_upgrade_2026-07-16.md): abandon if either scene is
+# >0.3 dB PSNR or >0.01 LPIPS worse than the exp034 baseline. Promotion needs
+# +0.002 Score on the pilot, same gate as every other wave.
+#
+# EXECUTION (Kaggle A, not run by run_sweep.py -- gsplat's trainer, not
+# nerfstudio's). On-ramp A, gsplat >= 1.4 native:
+#   python examples/simple_trainer.py mcmc --with_ut --with_eval3d \
+#       --data_dir data/processed/phase1/{scene}/train_staging_dense \
+#       --data_factor 1 --result_dir runs/phase1/exp042_3dgut/{scene}
+# On-ramp B if the gsplat build lacks the UT kernels: spirulae-splat.
+# NOTE --with_ut REQUIRES --with_eval3d (3D evaluation); without it the UT
+# projection is inconsistent with the 2D-evaluated opacity and results are junk.
+#
+# BASELINE TO COMPARE AGAINST: exp034's per-scene val_loss / test Score, NOT
+# 3DGUT-vs-3DGUT. Render through the SAME downstream chain (DIBR + refiner) --
+# a backbone that scores worse standalone can still win after DIBR (E4), so the
+# gate is measured at the end of the pipeline.
+experiment: exp042_3dgut_pilot
+results_csv: results/exp042_3dgut_pilot.csv
+gpu: rented
+split: mixed          # HNI0131 private, HCM0181 public (has test GT -> real Score)
+scenes: [HNI0131, HCM0181]
+data_template: "data/processed/phase1/{scene}/train_staging_dense"
+eval: val_split
+runner: external      # gsplat simple_trainer.py; see the command above
+variants:
+  # recorded for provenance; the runner above is invoked manually on Kaggle
+  gsplat_mcmc_ut: {method: gsplat-mcmc, iters: 30000, flags: ["--with_ut", "--with_eval3d"]}
+  gsplat_mcmc_nout: {method: gsplat-mcmc, iters: 30000, flags: []}   # isolates UT from MCMC

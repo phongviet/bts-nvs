@@ -104,13 +104,21 @@ def qvec2rotmat(q):
 
 
 class Warper:
-    def __init__(self, scene: str, config_path=None, ss: int = 1, sample: str = "bilinear"):
+    def __init__(self, scene: str, config_path=None, ss: int = 1, sample: str = "bilinear",
+                 depth_source=None):
         """ss: supersample factor for the target 3DGS render (2 = render the
         fallback/depth canvas at 2x and sample it on the finer grid — sharper
         fallback + more accurate depth edges; ss=1 is the original behavior).
         sample: 'bilinear' (original) or 'cubic' — interpolation used to gather
         real train-image pixels (and the ss fallback rgb). config_path: override
-        the CONFIGS backbone checkpoint (e.g. exp006 splatfacto-big)."""
+        the CONFIGS backbone checkpoint (e.g. exp006 splatfacto-big).
+        depth_source: exp041 (Wave 2) — a directory of externally-rendered
+        per-train-view depth maps ({image_name}.npy, metres, same H/W and camera
+        convention as our pinhole render) to use for the occlusion z-test
+        INSTEAD of the 3DGS expected depth. Populate it with
+        Analysis/18_import_depth.py (RaDe-GS / PGSR). Only the OCCLUSION TEST
+        changes; the fallback RGB still comes from our backbone, so this is a
+        clean depth-only A/B."""
         from nerfstudio.utils.eval_utils import eval_setup
         self.scene = scene
         self.ss = int(ss)
@@ -118,6 +126,9 @@ class Warper:
         self.scene_dir = scene_raw(scene) / scene
         # neighbor-depth cache must not be shared across backbones
         self.cache_tag = "_bb" if config_path is not None else ""
+        self.depth_source = Path(depth_source) if depth_source else None
+        if self.depth_source is not None and not self.depth_source.is_dir():
+            raise SystemExit(f"depth_source {self.depth_source} is not a directory")
         if config_path is not None:
             config_path = Path(config_path)
             if config_path.name != "config.yml":
@@ -189,6 +200,20 @@ class Warper:
 
     def train_depth(self, idx: int) -> np.ndarray:
         name, c2w, _ = self.train[idx]
+        if self.depth_source is not None:
+            if name not in self._depth_cache:
+                fp = self.depth_source / (name + ".npy")
+                # loud, not lazy: silently re-rendering 3DGS depth here would
+                # make an "external depth" A/B secretly measure the baseline.
+                if not fp.exists():
+                    raise SystemExit(f"depth_source missing {fp.name} — reimport "
+                                     f"{self.scene} with Analysis/18_import_depth.py")
+                d = np.load(fp).astype(np.float32)
+                if d.shape != (self.H_tr, self.W_tr):
+                    raise SystemExit(f"{fp.name}: depth is {d.shape}, expected "
+                                     f"{(self.H_tr, self.W_tr)} (train-image size)")
+                self._depth_cache[name] = d
+            return self._depth_cache[name]
         if name not in self._depth_cache:
             cache_dir = OUT / self.scene / f"depth_cache{self.cache_tag}"
             cache_dir.mkdir(parents=True, exist_ok=True)
@@ -224,7 +249,8 @@ class Warper:
     # ---- the core warp ----
     def synthesize(self, c2w_T: np.ndarray, fx, fy, cx, cy, W, H,
                    K=3, exclude_names=(), tol=0.03, min_w=1e-6, out_k=None,
-                   guard=None, canvas_margin=0, rel_tol=None, flow_align=None):
+                   guard=None, canvas_margin=0, rel_tol=None, flow_align=None,
+                   exposure=False):
         """out_k: if set (SIMPLE_RADIAL k), the OUTPUT image is synthesized in
         distorted geometry (matching raw DJI GT, per X4): each output pixel's ray
         is the undistorted direction, and the pinhole-rendered fallback/depth
@@ -244,7 +270,13 @@ class Warper:
         {backend, max_px, searaft_ckpt} enabling flow-residual alignment of each
         warped neighbour to the 3DGS render before the guard/blend, recovering
         few-pixel-displaced real texture the guard would otherwise reject
-        (train-free GADA-offset approximation, see Analysis/17_flow_align.py)."""
+        (train-free GADA-offset approximation, see Analysis/17_flow_align.py).
+        exposure: exp040 (IBGS, arXiv 2511.14357). Drone frames are auto-exposed,
+        so a neighbour can be globally brighter than the target view; the
+        photometric guard then rejects correct texture for a reason that has
+        nothing to do with geometry. Fits a per-channel gain+bias per neighbour
+        on its own depth-consistent pixels (robust, closed-form) and applies it
+        before the guard."""
         m = int(canvas_margin) if out_k is not None else 0
         ss = self.ss
         We, He = W + 2 * m, H + 2 * m
@@ -324,6 +356,8 @@ class Warper:
                 agree = 1.0 - np.abs(zn - zc) / np.maximum(band, 1e-9)
             n_depth_ok += int(visible.sum())
             col = self._sample_rgb(self.train_img(i), ud, vd)
+            if exposure:
+                col = _fit_exposure(col, rgb_T, visible)
             if flow_align is not None:
                 # align the warped neighbour to the 3DGS render (few-px offset
                 # recovery) BEFORE the guard, so displaced-but-valid texture is
@@ -395,6 +429,31 @@ class Warper:
         return np.concatenate(ch, axis=-1).astype(np.float32)
 
 
+def _fit_exposure(col, ref, mask, min_px=512, max_gain=1.25):
+    """exp040/IBGS: per-channel affine photometric alignment of a warped
+    neighbour to the 3DGS render, fitted ONLY on `mask` (the depth-consistent
+    pixels) so occluded/wrong-depth junk cannot drag the fit.
+
+    Deliberately global-affine and clamped, not per-pixel: a per-pixel fit would
+    just reproduce the render (erasing the real texture we warped in) and make
+    the guard vacuous. Gain is clamped to max_gain and the fit is skipped on thin
+    evidence — both keep a bad fit from being worse than no correction."""
+    m = mask if mask.dtype == bool else mask > 0.5
+    if int(m.sum()) < min_px:
+        return col
+    out = col.copy()
+    for c in range(col.shape[-1]):
+        x, y = col[..., c][m], ref[..., c][m]
+        vx = float(x.var())
+        if vx < 1e-6:
+            continue
+        g = float(np.cov(x, y)[0, 1] / vx)
+        g = float(np.clip(g, 1.0 / max_gain, max_gain))
+        b = float(y.mean() - g * x.mean())
+        out[..., c] = np.clip(g * col[..., c] + b, 0, 1)
+    return out
+
+
 def bilinear(img: np.ndarray, us: np.ndarray, vs: np.ndarray) -> np.ndarray:
     H, W = img.shape[:2]
     u0 = np.clip(np.floor(us).astype(int), 0, W - 2)
@@ -437,6 +496,13 @@ def main():
     ap.add_argument("--sample", choices=["bilinear", "cubic"], default="bilinear",
                     help="train-pixel gather interpolation")
     ap.add_argument("--config", default=None, help="override backbone checkpoint dir/config.yml")
+    ap.add_argument("--exposure", action="store_true",
+                    help="exp040/IBGS per-neighbour affine exposure correction "
+                         "before the guard (auto-exposed drone frames)")
+    ap.add_argument("--depth-source", default=None,
+                    help="exp041: dir of imported per-train-view depth .npy "
+                         "(RaDe-GS/PGSR) to use for the occlusion z-test instead "
+                         "of 3DGS expected depth; see Analysis/18_import_depth.py")
     ap.add_argument("--vtag", default="", help="extra output-dir tag for A/B variants")
     args = ap.parse_args()
 
@@ -446,7 +512,8 @@ def main():
     if args.flow_align == "searaft" and not args.searaft_ckpt:
         ap.error("--flow-align searaft requires --searaft-ckpt")
 
-    w = Warper(args.scene, config_path=args.config, ss=args.ss, sample=args.sample)
+    w = Warper(args.scene, config_path=args.config, ss=args.ss, sample=args.sample,
+               depth_source=args.depth_source)
     out_k = None if args.no_distort else w.k
     cmargin = args.canvas_margin
     if out_k is not None and out_k < -0.05 and cmargin == 0:
@@ -463,7 +530,7 @@ def main():
                 c2w, w.f, w.f, w.cx, w.cy, w.W_tr, w.H_tr,
                 K=args.K, exclude_names={name}, tol=args.tol, out_k=out_k,
                 guard=args.guard, canvas_margin=cmargin, rel_tol=args.rel_tol,
-                flow_align=flow_align)
+                flow_align=flow_align, exposure=args.exposure)
             H, W_ = gt.shape[:2]
             sl = (slice(int(H * .2), int(H * .8)), slice(int(W_ * .2), int(W_ * .8)))
             p_warp, p_3dgs = psnr(out[sl], gt[sl]), psnr(rgb_T[sl], gt[sl])
@@ -494,6 +561,8 @@ def main():
         tag += f"_K{args.K}"
     if flow_align is not None:
         tag += f"_fa{args.flow_align}{args.flow_max_px:g}"
+    if args.depth_source:
+        tag += "_dsrc"
     tag += args.vtag
     rdir = OUT / args.scene / f"renders{tag}"
     rdir.mkdir(parents=True, exist_ok=True)
@@ -503,7 +572,8 @@ def main():
         out, fallback_frac, _ = w.synthesize(c2w, r["fx"], r["fy"], r["cx"], r["cy"],
                                              r["width"], r["height"], K=args.K, tol=args.tol,
                                              out_k=out_k, guard=args.guard, canvas_margin=cmargin,
-                                             rel_tol=args.rel_tol, flow_align=flow_align)
+                                             rel_tol=args.rel_tol, flow_align=flow_align,
+                                             exposure=args.exposure)
         fb.append(fallback_frac)
         grj.append(w.last_stats["guard_reject_frac"])
         Image.fromarray((out * 255).astype(np.uint8)).save(rdir / r["image_name"], quality=98)
