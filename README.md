@@ -1,8 +1,23 @@
 # bts-nvs — Viettel AI Race 2026, BTS Digital Twin (Novel View Synthesis)
 
 3D Gaussian Splatting + real-pixel reprojection pipeline for the BTS tower NVS
-competition (Phase 1). Scoring: `Score = 0.4·(1−LPIPS) + 0.3·SSIM + 0.3·PSNR/50`
+competition. Scoring: `Score = 0.4·(1−LPIPS) + 0.3·SSIM + 0.3·PSNR/50`
 (LPIPS is VGG-backbone, `psnr_max=50` — both solved from leaderboard breakdowns).
+
+> ## ▶ ROUND 2 is the only submission target (since 2026-07-16)
+>
+> `data/raw/VAI_NVS_DATA_ROUND2/` — 7 scenes, 386 test frames, no GT. Phase-1 public
+> scenes remain the **local GT bench**; phase-1 private scenes are retired.
+>
+> - **Plan of record:** `Analysis/PLAN_round2_2026-07-17.md`
+> - **Test-set facts:** `Analysis/ROUND2_test_set_analysis_2026-07-16.md`
+> - **Live status:** `results/PROGRESS.md` (Table 1b = per-scene backbone runs)
+>
+> **The one hard regime split:** the 5 drone `HCM*` scenes behave like phase 1
+> (`SIMPLE_RADIAL`, k ≈ +0.0081…+0.0090 → the F1 remap applies), but `bonsai` and
+> `chair` are indoor handheld video with `SIMPLE_PINHOLE`, **k = 0 → the F1 remap must
+> be bypassed for them**. Applying it anyway warps correct geometry. Superseded phase-1
+> plans live in `docs/archive_phase1/`.
 
 ## Current strategy
 
@@ -29,10 +44,10 @@ measured on public-scene GT before scaling to the private fleet:
 | **P2** | per-scene neural refiner | small U-Net, 7-ch input `[F1 render, DIBR blend, visibility mask]` → residual on DIBR, trained per-scene on held-out train views against the grader objective | **+3.2** → 75.38 (rank 9) |
 | **exp034** | full stack | single-encode JPEG q95 4:4:4, hflip TTA, ss=2 supersampled + cubic resample, `splatfacto-big` backbone, refiner v2 | **+1.26** → **76.639** |
 
-Best submission to date: **LB 76.63890** (PSNR 25.34 / SSIM 85.25 / LPIPS 10.35, all 8
-private scenes). Gap to top-1 (77.02430) = **0.385 LB pts**; remaining levers R1–R6
-(per-scene iters, refiner seed-ensemble, K-neighbor DIBR source selection, extra refiner
-channels, ss=3) are specced in `Analysis/FINAL_PLAN_top1.md`.
+Best submission to date: **LB 76.63890** (PSNR 25.34 / SSIM 85.25 / LPIPS 10.35) — but
+that was scored on the retired phase-1 private set, so it is now a *method* validation,
+not a standing score. The stack above carries over to round 2 unchanged except for the
+conditional F1 remap noted at the top.
 
 **Compliance:** the pipeline uses only provided train images + train poses + our own
 3DGS model + provided test poses/intrinsics. No test images in training or inference, no
@@ -40,9 +55,10 @@ external data, no pretrained enhancement nets (LPIPS-VGG is used only inside the
 loss). Rasterizer is gsplat (allowed). Submissions are ≤ 350 MB, JPEG, exact test
 filenames — enforced by the packager.
 
-See `results/PROGRESS.md` for the full experiment ↔ leaderboard log,
-`Analysis/REPORT_winning_strategy.md` for the method write-up, and
-`Analysis/FINAL_PLAN_top1.md` for the top-1 ladder. `docs/strategy.md` preserves the
+See `results/PROGRESS.md` for the full experiment ↔ leaderboard log, and
+`docs/archive_phase1/REPORT_winning_strategy.md` for the method write-up
+(`docs/archive_phase1/FINAL_PLAN_top1.md` holds the phase-1 top-1 ladder — its rails
+still apply, its scene list does not). `docs/strategy.md` preserves the
 original SOTA survey (Sections 1–6 still valid); its v2 action plan is superseded.
 
 ## Setup

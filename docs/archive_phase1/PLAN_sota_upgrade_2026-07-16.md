@@ -1,7 +1,7 @@
 # PLAN — SOTA component upgrade campaign (drafted 2026-07-16)
 
 **Inputs:** `RESEARCH_sota_components_2026-07-15.md` (our survey) + the Claude deep-research
-report (`compass_artifact_wf-8c5e7258…_text_markdown.md`, same folder). This plan
+report (`Analysis/RESEARCH_deep_research_report_2026-07-16.md`). This plan
 supersedes neither `FINAL_PLAN_top1.md`'s rails (gates, calibration, fallback chain,
 submission cadence) nor the reserves — it sequences the reserves *plus* the new
 SOTA levers into waves sized for the Jul-30 Phase-1 deadline (14 days).

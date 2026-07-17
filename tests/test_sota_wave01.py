@@ -1,5 +1,5 @@
 """Unit tests for the Wave-0/Wave-1 SOTA-upgrade components
-(Analysis/PLAN_sota_upgrade_2026-07-16.md): the exp037 knapsack encoder, the
+(docs/archive_phase1/PLAN_sota_upgrade_2026-07-16.md): the exp037 knapsack encoder, the
 exp039 flow-residual alignment, and the exp040 refiner nets/checkpoint format.
 
 These cover the pure logic only -- the parts that do NOT need a nerfstudio
