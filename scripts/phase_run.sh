@@ -104,7 +104,10 @@ else
     --max-num-iterations "$MAX_ITERS" \
     --viewer.quit-on-train-completion True \
     $EXTRA_ARGS \
-    colmap --eval-mode all --colmap-path sparse/0
+    colmap --eval-mode all --colmap-path sparse/0 --downscale-factor 1
+    # --downscale-factor 1: >1600px images (round-2 bonsai, 1920x1080) otherwise
+    # trigger an INTERACTIVE downscale prompt -> EOFError in background runs;
+    # we train native res because test poses render at native res
 fi
 
 # --- 6. render test poses ---
