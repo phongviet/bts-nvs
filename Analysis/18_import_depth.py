@@ -101,6 +101,14 @@ def main():
                          "(needs the cache; run the DIBR once first)")
     ap.add_argument("--n-check", type=int, default=8)
     ap.add_argument("--force", action="store_true", help="import despite validation problems")
+    ap.add_argument("--config", default=None,
+                    help="backbone config for the Warper (scale + validation "
+                         "reference); use the SAME one the traincheck A/B uses")
+    ap.add_argument("--rescale-ns", action="store_true",
+                    help="multiply the imported depth by dataparser_scale to convert "
+                         "RAW COLMAP units (2DGS/RaDe-GS export) into nerfstudio "
+                         "units (our 3DGS depth). Depth is scale-covariant and "
+                         "rotation/translation-invariant, so this is the exact fix.")
     args = ap.parse_args()
 
     src = Path(args.src)
@@ -109,8 +117,16 @@ def main():
     if not npys:
         raise SystemExit(f"no *.npy under {src}")
 
+    # A single scale we apply to EVERY imported map (raw COLMAP -> nerfstudio).
+    scale = 1.0
+    w = None
+    if args.rescale_ns or args.validate:
+        w = _dibr().Warper(args.scene, config_path=args.config)
+        if args.rescale_ns:
+            scale = float(w.scale)
+            print(f"rescale-ns: multiplying imported depth by dataparser_scale={scale:.6g}")
+
     if args.validate:
-        w = _dibr().Warper(args.scene)
         problems = []
         idxs = np.linspace(0, len(w.train) - 1, args.n_check).round().astype(int)
         for i in idxs:
@@ -120,7 +136,7 @@ def main():
                 problems.append(f"{name}: missing from {src}")
                 continue
             problems += check_depth(w.train_depth(i).astype(np.float32),
-                                    np.load(fp).astype(np.float32), name)
+                                    np.load(fp).astype(np.float32) * scale, name)
         if problems:
             print(f"VALIDATION: {len(problems)} problem(s) on {args.n_check} views:")
             for p in problems:
@@ -133,7 +149,10 @@ def main():
 
     dst.mkdir(parents=True, exist_ok=True)
     for f in npys:
-        shutil.copy2(f, dst / f.name)
+        if args.rescale_ns:
+            np.save(dst / f.name, (np.load(f).astype(np.float32) * scale))
+        else:
+            shutil.copy2(f, dst / f.name)
     print(f"imported {len(npys)} depth maps -> {dst}")
     print(f"A/B it with:\n  python Analysis/04_x3_dibr_pilot.py --scene {args.scene} "
           f"--mode traincheck --guard 0.18 --depth-source {dst}")

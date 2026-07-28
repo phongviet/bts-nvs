@@ -48,3 +48,35 @@ third_party/
 # transient wave-orchestrator state
 results/local_wave_jul17/*.done
 results/local_wave_jul17_queue.log
+
+# ---- sss_experiment (moved in from repo root 2026-07-28) ----
+# Vendored upstream 3DGS-SSS repo (clone, not our code)
+sss_experiment/3D-student-splatting-and-scooping/
+# Heavy artifacts: run tarballs, trained plys/ckpts, COLMAP binaries — all regenerable
+sss_experiment/*.tar.gz
+sss_experiment/prod_out/
+sss_experiment/data/*/sparse/
+sss_experiment/data/**/*.bin
+
+# ---- Heavy regenerable artifacts (never track; repo convention) ----
+# Refiner working trees, gate outputs, pod-result merges
+Analysis/X5_refiner/
+Analysis/X6_difix/
+Analysis/X6_perc_gate/
+Analysis/Analysis_pod_results/
+# Rendered images and model weights anywhere under Analysis/ and results/
+Analysis/**/renders*/
+Analysis/**/*.pt
+Analysis/**/*.ckpt
+Analysis/**/*.ply
+Analysis/**/*.safetensors
+Analysis/**/*.npy
+results/**/renders*/
+# Trained model weights / point clouds generally
+*.ckpt
+*.safetensors
+# Round-2 submission staging (renders regenerable; zips already ignored)
+submissions/round2/**/renders/
+submissions/**/renders/
+*.zip
+sss_experiment/data/

@@ -1,0 +1,12 @@
+== START g2ctrl [13:10] ==
+== DONE g2ctrl [13:30] ==
+== START g2sss [13:30] ==
+== DONE g2sss [14:01] ==
+
+================ GATE-2 VERDICT (bonsai, 25 holdout, full-stack) ================
+  splat(ctrl) Score 0.6917  PSNR 26.093  SSIM 0.8452  LPIPS 0.2961
+  SSS(g2)    Score 0.7066  PSNR 27.049  SSIM 0.8560  LPIPS 0.2813
+  ΔScore +0.0149   ΔLPIPS -0.0148 (neg = SSS better)
+  reference: splat backbone-only 0.6759, SSS backbone-only 0.6993, shipped ctrl 0.6913
+  GATE (+0.002 Score AND no LPIPS regression): PASS -> fleet-integrate SSS bonsai + submission
+================================================================================

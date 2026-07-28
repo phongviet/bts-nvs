@@ -9,16 +9,15 @@ Loss: perceptual-heavy by design -- lpips_w * LPIPS_vgg + l1_w * L1, with
 transient masks (where present) zeroing masked pixels on both sides.
 Random 512px crops, batch via grad accumulation.
 
-FIRST-RUN VERIFICATION (rented GPU, before any real sweep -- record in
-experiment_log.md):
-  - print(pipe) and confirm components: unet, vae, scheduler, text_encoder.
-    This script reimplements the one-step img2img forward (encode -> unet at
-    t=199 -> scheduler x0 -> decode) so gradients flow; diff ONE image's
-    output against pipe(...) inference -- if they disagree beyond fp tolerance
-    the hub pipeline does something custom (e.g. skip-connected decoder) and
-    the forward below must be adapted to match (read the hub repo's
-    pipeline source; it's downloaded next to the weights).
-  - confirm LoRA target module names exist (script errors out otherwise).
+FIRST-RUN VERIFICATION -- DONE 2026-07-25, and now a test:
+tests/test_difix_one_step.py (local GPU, the pinned Difix env) checks
+  - one_step_fix vs the real DifixPipeline forward: mean |diff| 0.0000/255,
+  - LoRA gradients finite and non-zero,
+  - save_pretrained -> PeftModel.from_pretrained changes the output.
+It had exactly the failure this docstring predicted: the hub VAE decoder IS
+skip-connected, so vae.decode() needs decoder.incoming_skip_acts wired from
+encoder.current_down_blocks (see one_step_fix). Re-run that test after touching
+one_step_fix -- a forward that drifts from the pipeline trains the wrong thing.
 
 Usage:
   python src/enhancer/train_difix_lora.py \
@@ -45,9 +44,13 @@ TIMESTEP = 199
 # ---------------- data ----------------
 
 class PairsDataset(torch.utils.data.Dataset):
-    def __init__(self, root: Path, scenes: list[str], crop: int = 512):
+    def __init__(self, root: Path, scenes: list[str], crop: int = 512, center: bool = False):
         self.root = root
         self.crop = crop
+        # center=True => deterministic crops. The hold-out set MUST use it: with random
+        # crops the eval LPIPS moves by more than the gains we are trying to detect, so
+        # both the early stop and the "best" checkpoint choice would be sampling noise.
+        self.center = center
         with open(root / "manifest.csv") as f:
             self.rows = [r for r in csv.DictReader(f) if r["scene"] in scenes]
         if not self.rows:
@@ -66,8 +69,11 @@ class PairsDataset(torch.utils.data.Dataset):
             mask = np.ones_like(render[..., :1])
         h, w = render.shape[:2]
         c = min(self.crop, h, w)
-        y = random.randint(0, h - c)
-        x = random.randint(0, w - c)
+        if self.center:
+            y, x = (h - c) // 2, (w - c) // 2
+        else:
+            y = random.randint(0, h - c)
+            x = random.randint(0, w - c)
         sl = (slice(y, y + c), slice(x, x + c))
         to_t = lambda a: torch.from_numpy(np.ascontiguousarray(a[sl])).permute(2, 0, 1)
         return to_t(render), to_t(real), to_t(mask)
@@ -76,9 +82,11 @@ class PairsDataset(torch.utils.data.Dataset):
 # ---------------- model ----------------
 
 def load_components(model_id: str, device: str):
-    from diffusers import DiffusionPipeline
-    pipe = DiffusionPipeline.from_pretrained(model_id, trust_remote_code=True,
-                                             torch_dtype=torch.float32)
+    # nvidia/difix's model_index.json names DifixPipeline, which exists neither in
+    # diffusers nor as remote code -- it is vendored here (see run_difix.py).
+    from src.enhancer.pipeline_difix import DifixPipeline
+    pipe = DifixPipeline.from_pretrained(model_id, trust_remote_code=True,
+                                         torch_dtype=torch.float32)
     pipe.to(device)
     for name in ("unet", "vae", "scheduler"):
         assert hasattr(pipe, name), f"pipeline has no .{name} -- adapt this script to the hub code"
@@ -105,12 +113,29 @@ def encode_prompt(pipe, device):
 def one_step_fix(pipe, img: torch.Tensor, prompt_embeds: torch.Tensor) -> torch.Tensor:
     """Differentiable single-step img2img: img in [0,1] (B,3,H,W) -> fixed [0,1].
 
-    Mirrors the SD-Turbo/pix2pix-turbo structure Difix is built on. VERIFY
-    against the hub pipeline's own output on first run (see module docstring).
+    Mirrors DifixPipeline.__call__(num_inference_steps=1, timesteps=[199],
+    guidance_scale=0.0) so gradients flow. VERIFIED against the hub pipeline
+    (tests/test_difix_one_step.py: mean |diff| 0.0000/255, max 1 LSB).
+
+    Two Difix-specific details the generic SD img2img forward gets wrong:
+      * the VAE decoder is SKIP-CONNECTED -- my_vae_decoder_fwd reads
+        decoder.incoming_skip_acts, which the pipeline wires from
+        encoder.current_down_blocks between the unet step and the decode
+        (pipeline_difix.py). Omit it and vae.decode raises
+        AttributeError: 'Decoder' object has no attribute 'incoming_skip_acts'.
+      * the encode is UNNOISED (prepare_latents has the add_noise commented out),
+        so latents here are the clean image latents, not x_t.
+    The DDPM step at timesteps=[199] has prev_t=-1 => coeffs (1, 0) and zero
+    variance, i.e. it reduces exactly to the x0 prediction computed below.
     """
     vae, unet, sched = pipe.vae, pipe.unet, pipe.scheduler
     x = img * 2 - 1
-    latents = vae.encode(x).latent_dist.sample() * vae.config.scaling_factor
+    # No trainable parameter is upstream of the unet (the LoRA lives inside it, the VAE is
+    # frozen), so the encoder needs no autograd graph -- and both of its outputs used below
+    # (latents, skip acts) are leaves as far as the LoRA is concerned. Saves the entire
+    # encoder activation stack, which at 512px is the single biggest allocation here.
+    with torch.no_grad():
+        latents = vae.encode(x).latent_dist.sample() * vae.config.scaling_factor
     t = torch.full((latents.shape[0],), TIMESTEP, device=latents.device, dtype=torch.long)
     noise_pred = unet(latents, t, encoder_hidden_states=prompt_embeds.expand(latents.shape[0], -1, -1)).sample
     # x0 prediction under the scheduler's parameterization
@@ -122,6 +147,7 @@ def one_step_fix(pipe, img: torch.Tensor, prompt_embeds: torch.Tensor) -> torch.
         x0 = alphas.sqrt() * latents - (1 - alphas).sqrt() * noise_pred
     else:
         raise RuntimeError(f"unhandled prediction_type {pred_type} -- adapt one_step_fix()")
+    vae.decoder.incoming_skip_acts = vae.encoder.current_down_blocks  # skip-connected decoder
     out = vae.decode(x0 / vae.config.scaling_factor).sample
     return ((out + 1) / 2).clamp(0, 1)
 
@@ -154,6 +180,11 @@ def main():
     ap.add_argument("--eval-every", type=int, default=250)
     ap.add_argument("--patience", type=int, default=4,
                     help="stop after N evals without held-out improvement (divergence guard)")
+    ap.add_argument("--max-hours", type=float, default=0.0,
+                    help="wall-clock budget; stop cleanly when exceeded (0 = no limit). On a "
+                         "capped session (Kaggle: 12 h) --steps is a ceiling that will NOT be "
+                         "reached -- without this the session dies mid-train and everything "
+                         "downstream (apply, gate, package) never runs.")
     ap.add_argument("--target-modules", nargs="+",
                     default=["to_k", "to_q", "to_v", "to_out.0"])
     ap.add_argument("--seed", type=int, default=0)
@@ -170,7 +201,7 @@ def main():
     print(f"holdout scenes ({len(args.holdout_scenes)}): {args.holdout_scenes}")
 
     train_ds = PairsDataset(args.pairs_root, train_scenes, args.crop)
-    val_ds = PairsDataset(args.pairs_root, args.holdout_scenes, args.crop)
+    val_ds = PairsDataset(args.pairs_root, args.holdout_scenes, args.crop, center=True)
 
     pipe = load_components(args.model, device)
     pipe = add_lora(pipe, args.rank, args.target_modules)
@@ -194,9 +225,15 @@ def main():
     best_val, best_step, evals_since_best = base_val, 0, 0
     history = [{"step": 0, "val_lpips": base_val}]
 
+    import time
+    t_start = time.time()
     step = 0
     it = iter(loader)
     while step < args.steps:
+        if args.max_hours and (time.time() - t_start) / 3600 >= args.max_hours:
+            print(f"time budget reached ({args.max_hours:.2f} h) at step {step} -- stopping "
+                  f"cleanly so the caller keeps time to apply and score")
+            break
         opt.zero_grad()
         for _ in range(args.grad_accum):
             try:
@@ -215,7 +252,8 @@ def main():
 
         if step % args.eval_every == 0:
             val = evaluate(pipe, val_ds, prompt_embeds, lpips_fn, device)
-            history.append({"step": step, "val_lpips": val})
+            history.append({"step": step, "val_lpips": val,
+                            "hours": round((time.time() - t_start) / 3600, 3)})
             marker = ""
             if val < best_val:
                 best_val, best_step, evals_since_best = val, step, 0
@@ -229,6 +267,9 @@ def main():
                 print(f"early stop: no held-out improvement for {args.patience} evals (divergence guard)")
                 break
 
+    # best/ is only written when the hold-out improves; final/ always exists so a
+    # downstream apply step can run (and so a no-improvement run is inspectable).
+    pipe.unet.save_pretrained(args.out / "final")
     print(f"done. best held-out LPIPS {best_val:.4f} @ step {best_step} "
           f"(pre-finetune {base_val:.4f}) -> {args.out}/best")
     if best_step == 0:

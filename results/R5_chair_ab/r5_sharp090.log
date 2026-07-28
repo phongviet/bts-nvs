@@ -1,0 +1,71 @@
+/home/phong/miniconda3/envs/airace/lib/python3.10/site-packages/nerfstudio/field_components/activations.py:32: FutureWarning: `torch.cuda.amp.custom_fwd(args...)` is deprecated. Please use `torch.amp.custom_fwd(args..., device_type='cuda')` instead.
+  @custom_fwd(cast_inputs=torch.float32)
+/home/phong/miniconda3/envs/airace/lib/python3.10/site-packages/nerfstudio/field_components/activations.py:39: FutureWarning: `torch.cuda.amp.custom_bwd(args...)` is deprecated. Please use `torch.amp.custom_bwd(args..., device_type='cuda')` instead.
+  def backward(ctx, g):
+[10:24:45]  Be careful with '--eval-mode=all'. If using camera optimization, the cameras may    colmap_dataparser.py:236
+           diverge in the current implementation, giving unpredictable results.                                         
+[10:25:14]  Be careful with '--eval-mode=all'. If using camera optimization, the cameras may    colmap_dataparser.py:236
+           diverge in the current implementation, giving unpredictable results.                                         
+/home/phong/miniconda3/envs/airace/lib/python3.10/site-packages/torchmetrics/functional/image/lpips.py:332: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  self.load_state_dict(torch.load(model_path, map_location="cpu"), strict=False)
+Loading latest checkpoint from load_dir
+/home/phong/miniconda3/envs/airace/lib/python3.10/site-packages/nerfstudio/utils/eval_utils.py:62: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  loaded_state = torch.load(load_path, map_location="cpu")
+✅ Done loading checkpoint from 
+runs/round2/val_holdout/chair/train_staging_holdout/splatfacto/2026-07-19_094122/nerfstudio_models/step-000029999.ckpt
+/home/phong/miniconda3/envs/airace/lib/python3.10/site-packages/torchvision/models/_utils.py:208: UserWarning: The parameter 'pretrained' is deprecated since 0.13 and may be removed in the future, please use 'weights' instead.
+  warnings.warn(
+/home/phong/miniconda3/envs/airace/lib/python3.10/site-packages/torchvision/models/_utils.py:223: UserWarning: Arguments other than a weight enum or `None` for 'weights' are deprecated since 0.13 and may be removed in the future. The current behavior is equivalent to passing `weights=VGG16_Weights.IMAGENET1K_V1`. You can also use `weights=VGG16_Weights.DEFAULT` to get the most up-to-date weights.
+  warnings.warn(msg)
+/home/phong/miniconda3/envs/airace/lib/python3.10/site-packages/lpips/lpips.py:107: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  self.load_state_dict(torch.load(model_path, map_location='cpu'), strict=False)
+  chair: pair-select=sharp n=90 kept varLap [772..5790] median 1506 | pool [33..5790] median 768
+chair: 90 training pairs ready (0 new)
+Setting up [LPIPS] perceptual loss: trunk [vgg], v[0.1], spatial [off]
+Loading model from: /home/phong/miniconda3/envs/airace/lib/python3.10/site-packages/lpips/weights/v0.1/vgg.pth
+  it 250: train_loss 0.1909  val_loss 0.2839
+  it 500: train_loss 0.1715  val_loss 0.2138
+  it 750: train_loss 0.1256  val_loss 0.1857
+  it 1000: train_loss 0.1305  val_loss 0.1720
+  it 1250: train_loss 0.1432  val_loss 0.1652
+  it 1500: train_loss 0.1190  val_loss 0.1611
+  it 1750: train_loss 0.1962  val_loss 0.1583
+  it 2000: train_loss 0.1377  val_loss 0.1565
+  it 2250: train_loss 0.1202  val_loss 0.1553
+  it 2500: train_loss 0.1890  val_loss 0.1544
+  it 2750: train_loss 0.0972  val_loss 0.1538
+  it 3000: train_loss 0.1208  val_loss 0.1535
+  it 3250: train_loss 0.1078  val_loss 0.1533
+  it 3500: train_loss 0.1998  val_loss 0.1530
+  it 3750: train_loss 0.1233  val_loss 0.1527
+  it 4000: train_loss 0.1302  val_loss 0.1524
+  it 4250: train_loss 0.1034  val_loss 0.1521
+  it 4500: train_loss 0.1354  val_loss 0.1518
+  it 4750: train_loss 0.1235  val_loss 0.1516
+  it 5000: train_loss 0.1469  val_loss 0.1514
+  it 5250: train_loss 0.1668  val_loss 0.1512
+  it 5500: train_loss 0.1010  val_loss 0.1510
+  it 5750: train_loss 0.1021  val_loss 0.1509
+  it 6000: train_loss 0.1384  val_loss 0.1508
+chair: best val_loss 0.1508 -> saved refiner_r5_sharp090.pt
+[10:39:02]  Be careful with '--eval-mode=all'. If using camera optimization, the cameras may    colmap_dataparser.py:236
+           diverge in the current implementation, giving unpredictable results.                                         
+[10:39:17]  Be careful with '--eval-mode=all'. If using camera optimization, the cameras may    colmap_dataparser.py:236
+           diverge in the current implementation, giving unpredictable results.                                         
+/home/phong/miniconda3/envs/airace/lib/python3.10/site-packages/torchmetrics/functional/image/lpips.py:332: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  self.load_state_dict(torch.load(model_path, map_location="cpu"), strict=False)
+Loading latest checkpoint from load_dir
+/home/phong/miniconda3/envs/airace/lib/python3.10/site-packages/nerfstudio/utils/eval_utils.py:62: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  loaded_state = torch.load(load_path, map_location="cpu")
+✅ Done loading checkpoint from 
+runs/round2/val_holdout/chair/train_staging_holdout/splatfacto/2026-07-19_094122/nerfstudio_models/step-000029999.ckpt
+/home/phong/miniconda3/envs/airace/lib/python3.10/site-packages/torchvision/models/_utils.py:208: UserWarning: The parameter 'pretrained' is deprecated since 0.13 and may be removed in the future, please use 'weights' instead.
+  warnings.warn(
+/home/phong/miniconda3/envs/airace/lib/python3.10/site-packages/torchvision/models/_utils.py:223: UserWarning: Arguments other than a weight enum or `None` for 'weights' are deprecated since 0.13 and may be removed in the future. The current behavior is equivalent to passing `weights=VGG16_Weights.IMAGENET1K_V1`. You can also use `weights=VGG16_Weights.DEFAULT` to get the most up-to-date weights.
+  warnings.warn(msg)
+/home/phong/miniconda3/envs/airace/lib/python3.10/site-packages/lpips/lpips.py:107: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  self.load_state_dict(torch.load(model_path, map_location='cpu'), strict=False)
+Setting up [LPIPS] perceptual loss: trunk [vgg], v[0.1], spatial [off]
+Loading model from: /home/phong/miniconda3/envs/airace/lib/python3.10/site-packages/lpips/weights/v0.1/vgg.pth
+
+chair VAL_r5_sharp090: PSNR=23.835 SSIM=0.7757 LPIPS=0.2796 Score=0.6639  (n=25)

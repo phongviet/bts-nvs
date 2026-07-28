@@ -129,16 +129,24 @@ def _decode(data: bytes) -> Image.Image:
 
 # ------------------------------- the knapsack ----------------------------------
 def allocate(images, budget_bytes, qualities=range(88, 99, 2), subsampling=0,
-             tune="ms-ssim", refs=None, verbose=True):
+             tune="ms-ssim", refs=None, verbose=True, weights=None):
     """images: [(name, PIL)]. refs: optional [(name, PIL)] lossless references
     for the fidelity proxy (defaults to `images` themselves = self-reference).
     Returns {name: (jpeg_bytes, quality)} maximising summed recoverable_score
     under the total byte budget.
 
+    weights: optional {name: float} on each frame's marginal score gain. Default
+    (all 1.0) maximises the mean over FRAMES. The round-2 grader averages over
+    SCENES, so the correct weight is 1/(n_scenes * frames_in_that_scene) -- e.g.
+    a 28-frame bonsai frame is worth 2.14x a 60-frame drone frame. Left
+    unweighted, the pooled knapsack quietly spends the budget on whichever scene
+    has the most frames.
+
     Curve per image: encode at each quality once, record (size, score). Greedy
     upgrade from the cheapest rung by best Score-per-extra-byte until no upgrade
     fits the remaining budget."""
     qs = sorted(set(int(q) for q in qualities))
+    weights = weights or {}
     ref_map = {n: im for n, im in (refs or images)}
     curves = {}  # name -> list of (quality, bytes, score) sorted by size asc
     for name, im in images:
@@ -175,7 +183,11 @@ def allocate(images, budget_bytes, qualities=range(88, 99, 2), subsampling=0,
                 dsc = rungs[ci + 1][3] - rungs[ci][3]
                 if dsz <= 0 or total + dsz > budget_bytes:
                     continue
-                ratio = dsc / dsz
+                # Weighted marginal gain. Unweighted (all w=1) maximises the mean
+                # over FRAMES, but the grader averages over SCENES -- so a scene
+                # with few frames is worth more per frame, and equal weighting
+                # silently starves it. See `weights` in the docstring.
+                ratio = dsc * weights.get(n, 1.0) / dsz
                 if best is None or ratio > best[0]:
                     best = (ratio, n, dsz)
             if best is None:
