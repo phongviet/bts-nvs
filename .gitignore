@@ -80,3 +80,11 @@ submissions/round2/**/renders/
 submissions/**/renders/
 *.zip
 sss_experiment/data/
+Analysis/Analysis.md
+configs/configs.md
+logs/logs.md
+results/results.md
+runs/runs.md
+src/src.md
+sss_experiment/sss.md
+tests/tests.md
