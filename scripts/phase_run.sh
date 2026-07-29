@@ -89,8 +89,10 @@ if [ "$USE_TRANSIENT_MASKS" = "1" ] && [ ! -d "$SCENE_ROOT/transient_masks" ]; t
 fi
 
 # --- 5. train locked config ---
-final_ckpt=$(find "$RUN_DIR" -name "step-*.ckpt" 2>/dev/null | sort | tail -1)
-final_step=$(echo "$final_ckpt" | grep -oE '[0-9]+' | tail -1)
+final_ckpt=$(find "$RUN_DIR" -name "step-*.ckpt" 2>/dev/null | sort | tail -1 || true)
+# `|| true`: on a FRESH scene the ckpt list is empty and grep's exit-1 would
+# kill the whole run under set -e/pipefail (bit us on round-2 chair, Jul-17)
+final_step=$(echo "$final_ckpt" | grep -oE '[0-9]+' | tail -1 || true)
 if [ -n "$final_step" ] && [ "$((10#$final_step))" -ge "$((MAX_ITERS - 1))" ]; then
   echo "== $SCENE: training complete (step $final_step) =="
 else
@@ -102,7 +104,10 @@ else
     --max-num-iterations "$MAX_ITERS" \
     --viewer.quit-on-train-completion True \
     $EXTRA_ARGS \
-    colmap --eval-mode all --colmap-path sparse/0
+    colmap --eval-mode all --colmap-path sparse/0 --downscale-factor 1
+    # --downscale-factor 1: >1600px images (round-2 bonsai, 1920x1080) otherwise
+    # trigger an INTERACTIVE downscale prompt -> EOFError in background runs;
+    # we train native res because test poses render at native res
 fi
 
 # --- 6. render test poses ---

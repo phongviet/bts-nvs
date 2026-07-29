@@ -1,0 +1,30 @@
+/home/phong/miniconda3/envs/airace/lib/python3.10/site-packages/nerfstudio/field_components/activations.py:32: FutureWarning: `torch.cuda.amp.custom_fwd(args...)` is deprecated. Please use `torch.amp.custom_fwd(args..., device_type='cuda')` instead.
+  @custom_fwd(cast_inputs=torch.float32)
+/home/phong/miniconda3/envs/airace/lib/python3.10/site-packages/nerfstudio/field_components/activations.py:39: FutureWarning: `torch.cuda.amp.custom_bwd(args...)` is deprecated. Please use `torch.amp.custom_bwd(args..., device_type='cuda')` instead.
+  def backward(ctx, g):
+[15:53:29]  Be careful with '--eval-mode=all'. If using camera optimization, the cameras may    colmap_dataparser.py:236
+           diverge in the current implementation, giving unpredictable results.                                         
+[15:54:18]  Be careful with '--eval-mode=all'. If using camera optimization, the cameras may    colmap_dataparser.py:236
+           diverge in the current implementation, giving unpredictable results.                                         
+/home/phong/miniconda3/envs/airace/lib/python3.10/site-packages/torchmetrics/functional/image/lpips.py:332: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  self.load_state_dict(torch.load(model_path, map_location="cpu"), strict=False)
+Loading latest checkpoint from load_dir
+/home/phong/miniconda3/envs/airace/lib/python3.10/site-packages/nerfstudio/utils/eval_utils.py:62: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  loaded_state = torch.load(load_path, map_location="cpu")
+✅ Done loading checkpoint from 
+runs/round2/phase_locked/bonsai/train_staging_dense/splatfacto/2026-07-17_091254/nerfstudio_models/step-000029999.ckpt
+frame_000130.jpg: center-PSNR warp=26.14 vs 3dgs=26.01 (fallback 38.7%, guard-reject 1.2%, flow-applied 0.0%)
+frame_000350.jpg: center-PSNR warp=22.96 vs 3dgs=22.97 (fallback 40.6%, guard-reject 1.3%, flow-applied 0.0%)
+frame_000580.jpg: center-PSNR warp=23.46 vs 3dgs=23.37 (fallback 41.7%, guard-reject 1.9%, flow-applied 0.0%)
+frame_000790.jpg: center-PSNR warp=26.33 vs 3dgs=25.83 (fallback 47.4%, guard-reject 0.8%, flow-applied 0.0%)
+frame_001030.jpg: center-PSNR warp=23.99 vs 3dgs=24.49 (fallback 36.7%, guard-reject 2.0%, flow-applied 0.0%)
+frame_001240.jpg: center-PSNR warp=21.84 vs 3dgs=22.08 (fallback 56.3%, guard-reject 3.8%, flow-applied 0.0%)
+frame_001440.jpg: center-PSNR warp=28.43 vs 3dgs=28.08 (fallback 29.4%, guard-reject 0.3%, flow-applied 0.0%)
+frame_001650.jpg: center-PSNR warp=24.84 vs 3dgs=24.19 (fallback 27.3%, guard-reject 0.9%, flow-applied 0.0%)
+frame_001860.jpg: center-PSNR warp=24.13 vs 3dgs=23.68 (fallback 51.0%, guard-reject 0.6%, flow-applied 0.0%)
+frame_002120.jpg: center-PSNR warp=29.02 vs 3dgs=26.73 (fallback 18.6%, guard-reject 0.4%, flow-applied 0.0%)
+frame_002320.jpg: center-PSNR warp=30.88 vs 3dgs=30.88 (fallback 49.8%, guard-reject 0.2%, flow-applied 0.0%)
+frame_002530.jpg: center-PSNR warp=28.40 vs 3dgs=28.74 (fallback 21.0%, guard-reject 0.5%, flow-applied 0.0%)
+
+MEAN center-PSNR: warp=25.87 vs 3dgs=25.59 (WARP WINS)
+MEAN guard-reject=1.2% flow-applied=0.0% (flow_align=off)

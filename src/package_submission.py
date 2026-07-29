@@ -158,8 +158,15 @@ def package(runs_root: Path, scenes: list[str], out_zip: Path,
             for e in errors:
                 print("ZIP VALIDATION:", e)
             raise RuntimeError("packaged zip failed validation -- do not upload.")
-    size_mb = out_zip.stat().st_size / 2**20
-    print(f"Wrote {out_zip} covering {len(scenes)} scenes ({size_mb:.1f} MB). "
+    # Print BOTH units explicitly. This line used to divide by 2**20 and call the
+    # result "MB" while 24_build_round2_submission.py divided by 1e6 and also called
+    # it "MB" -- so one run reported the same zip as both 324.3 and 340.0, and the
+    # upload page (which shows MiB) looked like it had lost 16 MB. Never label a
+    # size without its base again.
+    nbytes = out_zip.stat().st_size
+    print(f"Wrote {out_zip} covering {len(scenes)} scenes "
+          f"({nbytes:,} B = {nbytes/1e6:.1f} MB decimal = {nbytes/2**20:.1f} MiB binary). "
+          f"Upload pages usually display MiB. "
           f"Reminder: upload it named submission_round1.zip.")
 
 

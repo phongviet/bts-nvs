@@ -1,0 +1,8 @@
+scene,n_test,n_train,dist_frac_p50,dist_frac_p90,dist_frac_max,angle_p50,angle_p90,angle_max,min_angle_p90,frac_uncovered,n_near_min,n_near_p10,regime
+chair,58,205,0.02017,0.02537,0.04236,3.29,5.06,10.3,4.7,0.0,1,2,interpolative
+bonsai,28,248,0.01237,0.0337,0.03967,4.32,6.21,8.37,4.39,0.0,1,2,interpolative
+HCM0421,60,240,0.02775,0.0491,0.07101,8.52,17.41,31.12,4.38,0.0,0,0,interpolative
+HCM0539,60,240,0.02093,0.04283,0.05145,9.23,30.72,31.32,4.62,0.0,0,2,interpolative
+HCM0540,60,240,0.01941,0.0547,0.05946,8.73,16.25,31.98,3.13,0.0,0,0,interpolative
+HCM0644,60,240,0.01991,0.04011,0.06368,11.25,30.14,31.42,7.07,0.0,0,1,interpolative
+HCM0674,60,240,0.02067,0.04765,0.06424,8.37,18.91,32.18,3.54,0.0,0,1,interpolative

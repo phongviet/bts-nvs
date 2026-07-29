@@ -13,7 +13,8 @@ Usage:
 splatfacto-mcmc=src.register_custom_methods:splatfacto_mcmc_method,\
 splatfacto-perceptual=src.register_custom_methods:splatfacto_perceptual_method,\
 splatfacto-mcmc-perceptual=src.register_custom_methods:splatfacto_mcmc_perceptual_method,\
-splatfacto-tpw=src.register_custom_methods:splatfacto_tpw_method"
+splatfacto-tpw=src.register_custom_methods:splatfacto_tpw_method,\
+splatfacto-depth=src.register_custom_methods:splatfacto_depth_method"
     ns-train splatfacto-mcmc --data <staging_dir> ... colmap --eval-mode all --colmap-path sparse/0
 
 Each method clones nerfstudio's method_configs["splatfacto"] TrainerConfig
@@ -39,6 +40,7 @@ from src.models.splatfacto_perceptual import (
 from src.models.splatfacto_periphery import SplatfactoPeripheryModelConfig
 from src.models.splatfacto_legs import SplatfactoLEGSModelConfig
 from src.models.splatfacto_fregs import SplatfactoFreGSModelConfig
+from src.models.splatfacto_depth import SplatfactoDepthModelConfig
 
 
 def make_trainer_config(method_name: str, model_config, datamanager_config=None) -> TrainerConfig:
@@ -139,4 +141,12 @@ splatfacto_legs_method = MethodSpecification(
 splatfacto_fregs_method = MethodSpecification(
     config=make_trainer_config("splatfacto-fregs", SplatfactoFreGSModelConfig()),
     description="Splatfacto with FreGS progressive frequency-regularization loss (exp024, arXiv:2403.06908).",
+)
+
+
+splatfacto_depth_method = MethodSpecification(
+    config=make_trainer_config("splatfacto-depth", SplatfactoDepthModelConfig()),
+    description=("Splatfacto + scale-and-shift-invariant Depth-Anything-V2 loss "
+                 "(backbone-side plan E2). Requires `--depths-path <dir>` on the colmap "
+                 "dataparser so depth_filenames stay index-aligned with the images."),
 )

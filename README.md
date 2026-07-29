@@ -1,49 +1,50 @@
 # bts-nvs — Viettel AI Race 2026, BTS Digital Twin (Novel View Synthesis)
 
 3D Gaussian Splatting + real-pixel reprojection pipeline for the BTS tower NVS
-competition (Phase 1). Scoring: `Score = 0.4·(1−LPIPS) + 0.3·SSIM + 0.3·PSNR/50`
-(LPIPS is VGG-backbone, `psnr_max=50` — both solved from leaderboard breakdowns).
+competition. Scoring: `Score = 0.4·(1−LPIPS) + 0.3·SSIM + 0.3·(PSNR/50)`
+(LPIPS-VGG, `psnr_max=50` — both solved from leaderboard breakdowns; averaged
+per scene). **All compute runs on Kaggle** (free T4×2 GPU sessions).
 
-## Current strategy
+> ## ▶ Round 2 is the only submission target (deadline 2026-07-30)
+>
+> `data/raw/VAI_NVS_DATA_ROUND2/` — 7 scenes, 386 test frames, no GT. Phase-1
+> `public_set` remains the local GT bench.
+>
+> **Best submission: LB 75.3793** (`submissions/round2/round2_v7a_all_drones_adv/`,
+> md5 `9375ced6`). All lever families are measured and closed; **v7a stands**.
+>
+> **The one hard regime split:** the 5 drone `HCM*` scenes are `SIMPLE_RADIAL`
+> (k ≈ +0.008 → the F1 remap applies), but `bonsai`/`chair` are indoor handheld
+> video, `SIMPLE_PINHOLE`, **k = 0 → the F1 remap must be bypassed for them.**
 
-**This is a view-*interpolation* problem, not view-extrapolation.** 86–98 % of test
-frames sit sequentially adjacent to a train frame (0.2–0.5× spacing), so the highest
-lever is **reusing real train pixels and correcting the camera model**, not inventing
-detail. Two independently-measured findings overturned the original plan:
+## Documentation
 
-- A generative post-processing/supervision stage (Difix3D+/SD-Turbo), the v1/v2
-  thesis, was a **decisive net loss** on real test GT (exp015: −0.034/−0.037) — our
-  renders are too artifact-light for a diffusion "fixer" to help.
-- The test GT is raw `SIMPLE_RADIAL` while the pose CSV omits the distortion `k`; our
-  pinhole renders were geometrically misaligned at the frame periphery. Correcting this
-  was the single biggest score jump of the whole competition.
+Everything — competition rules, the method, the full experiment log, results,
+and the reproduction path — lives in **[`docs/`](docs/README.md)**:
 
-The current winning pipeline is a per-scene, embarrassingly-parallel stack, each rung
-measured on public-scene GT before scaling to the private fleet:
+| doc | contents |
+|---|---|
+| [`docs/01_competition.md`](docs/01_competition.md) | Task, grader math, data (R1 & R2), submission format, compliance & provenance |
+| [`docs/02_pipeline.md`](docs/02_pipeline.md) | The shipped stack: backbone → F1 remap → DIBR → refiner → encode |
+| [`docs/03_experiments.md`](docs/03_experiments.md) | Full experiment log & lever graveyard |
+| [`docs/04_results.md`](docs/04_results.md) | Leaderboard history, submissions, calibration |
+| [`docs/05_reproducibility.md`](docs/05_reproducibility.md) | Env setup, exact reproduce commands, Kaggle workflow, gotchas |
+| [`docs/06_sss_backbone.md`](docs/06_sss_backbone.md) | SSS backbone ablation (`sss_experiment/`) |
 
-| stage | lever | mechanism | measured LB gain |
-|---|---|---|---|
-| **Backbone** | dense-COLMAP-init `splatfacto-big` (anti-aliased / Mip) | careful init + capacity; MCMC, scale-reg, sky-mask, camera-opt all tested and dropped | baseline 57.43 |
-| **F1** | distortion remap | remap pinhole renders into the true `SIMPLE_RADIAL` geometry (no retraining) | **+16.4** → 70.45 |
-| **F2** | DIBR hybrid | warp real train pixels via 3DGS depth, occlusion z-test + photometric guard, 3DGS fills holes | **+1.8** → 72.22 |
-| **P2** | per-scene neural refiner | small U-Net, 7-ch input `[F1 render, DIBR blend, visibility mask]` → residual on DIBR, trained per-scene on held-out train views against the grader objective | **+3.2** → 75.38 (rank 9) |
-| **exp034** | full stack | single-encode JPEG q95 4:4:4, hflip TTA, ss=2 supersampled + cubic resample, `splatfacto-big` backbone, refiner v2 | **+1.26** → **76.639** |
+## The pipeline in one table
 
-Best submission to date: **LB 76.63890** (PSNR 25.34 / SSIM 85.25 / LPIPS 10.35, all 8
-private scenes). Gap to top-1 (77.02430) = **0.385 LB pts**; remaining levers R1–R6
-(per-scene iters, refiner seed-ensemble, K-neighbor DIBR source selection, extra refiner
-channels, ss=3) are specced in `Analysis/FINAL_PLAN_top1.md`.
+| stage | lever | measured LB gain |
+|---|---|---|
+| Backbone | dense-COLMAP-init `splatfacto-big`, anti-aliased | baseline 57.43 |
+| **F1** | distortion remap (pinhole → true `SIMPLE_RADIAL`, drones only) | **+16.4** → 70.45 |
+| **F2** | DIBR — warp real train pixels via 3DGS depth + occlusion/photometric guard | **+1.8** → 72.22 |
+| **P2** | per-scene neural refiner (U-Net on [render, DIBR, mask], grader objective; naf+evidence+adv 0.003) | **+3.2** → 75.38 |
+| encode | single-encode q98 4:4:4, pooled knapsack, budget-auto | — |
 
-**Compliance:** the pipeline uses only provided train images + train poses + our own
-3DGS model + provided test poses/intrinsics. No test images in training or inference, no
-external data, no pretrained enhancement nets (LPIPS-VGG is used only inside the training
-loss). Rasterizer is gsplat (allowed). Submissions are ≤ 350 MB, JPEG, exact test
-filenames — enforced by the packager.
-
-See `results/PROGRESS.md` for the full experiment ↔ leaderboard log,
-`Analysis/REPORT_winning_strategy.md` for the method write-up, and
-`Analysis/FINAL_PLAN_top1.md` for the top-1 ladder. `docs/strategy.md` preserves the
-original SOTA survey (Sections 1–6 still valid); its v2 action plan is superseded.
+This is a view-**interpolation** problem: the highest levers reuse real train
+pixels and correct the camera model, not invent detail. See
+[`docs/02_pipeline.md`](docs/02_pipeline.md) for the full rationale and
+[`docs/03_experiments.md`](docs/03_experiments.md) for what was refuted.
 
 ## Setup
 
@@ -52,7 +53,7 @@ conda env create -f environment.yml   # creates the `airace` env
 conda activate airace
 ```
 
-Or from scratch:
+From scratch:
 
 ```bash
 conda create -n airace python=3.10 -y && conda activate airace
@@ -61,60 +62,41 @@ pip install nerfstudio gsplat
 pip install lpips torchmetrics pillow numpy pandas tqdm pyyaml opencv-python plyfile
 ```
 
-## Data
+## Reproduce the best result (v7a)
 
-Extract the organizers' archive into `data/raw/` (read-only, never hand-edited):
-
-```
-data/raw/phase1/public_set/<scene>/train/{images,sparse/0}/
-data/raw/phase1/public_set/<scene>/test/{images,test_poses.csv}
-data/raw/phase1/private_set1/<scene>/...   # test GT withheld
-```
-
-`public_set` ships test GT — use it to compute the real competition Score locally
-(the leaderboard grades private scenes directly, so public-5 mean is the calibration
-signal: it tracks private LB within ±0.004).
-
-## Pipeline
-
-**Baseline 3DGS backbone** (per scene):
+Full commands in [`docs/05_reproducibility.md`](docs/05_reproducibility.md). In
+short, per scene (drone example):
 
 ```bash
-ns-train splatfacto-big --data data/raw/phase1/public_set/<scene>/train \
-  --output-dir runs/phase1/<exp>_<scene>          # dense-COLMAP init, anti-aliased
+python src/data_prep/filter_colmap_train.py --scene <scene> ...   # avoid test-leak
+python src/data_prep/build_dense_colmap.py  --scene <scene> ...   # dense MVS init
 
-python src/render.py  --checkpoint <ckpt> --poses <scene>/test/test_poses.csv --out <renders>
-python src/metrics.py --renders <renders> --gt <scene>/test/images --lpips-net vgg --psnr-max 50
+python Analysis/kaggle_exp034_fleet.py \
+    --phase round2 --scenes <scene> \
+    --suffix _v2 --blocks naf --evidence --adv 0.003   # backbone→F1→DIBR→refiner
+
+python Analysis/24_build_round2_submission.py --suffix _v2   # → submission_round1.zip
 ```
 
-**Winning stack** (F1 remap → F2 DIBR → P2 refiner → package), driven per scene:
-
-```bash
-python Analysis/03_x4_distortion_remap.py    # F1: pinhole -> SIMPLE_RADIAL geometry
-python Analysis/04_x3_dibr_pilot.py          # F2: depth-warp real train pixels + guard
-python Analysis/10_refiner_pilot.py --config <big_ckpt> --ss 2 --sample cubic \
-  --base 48 --iters 6000 --ema 0.999 --tta   # P2: per-scene U-Net refiner (v2)
-python Analysis/14_build_v2_submission.py    # single-encode q95 4:4:4, budget-auto, per-scene fallback
-```
-
-The full 8-scene private fleet runs on Kaggle T4×2 / a rented 4090 via
+The 7-scene fleet runs on Kaggle T4×2 (2 scenes/session, `PARALLEL=2`) via
 `Analysis/kaggle_exp034_fleet.py` (idempotent/resumable) and
-`scripts/build_kaggle_exp034_upload.py`. The
-builder falls back per scene (refiner v2 → v1 → DIBR → F1 remap) so partial fleets
-still ship a valid submission.
+`scripts/build_kaggle_round2_upload.py`. `bonsai` uses an SSS render-channel
+override ([`docs/06_sss_backbone.md`](docs/06_sss_backbone.md)). The packager
+falls back per scene (refiner → DIBR → F1) so a partial fleet still ships valid.
 
 ## Repository layout
 
 ```
-src/         model methods, render, metrics, submission packaging
-configs/     experiment configs (exp004/022/023/024/029/034 …)
-Analysis/    winning-stack scripts + reports (F1/F2/P2, refiner, JPEG-budget studies)
-scripts/     sweep runners, Kaggle upload builders, diagnostics
-docs/         strategy survey, runbook, reproducibility checklist, rules
-results/      PROGRESS.md (experiment ↔ leaderboard truth), ablation CSVs
-runs/         per-scene run metadata (heavy binaries gitignored)
-tests/        loss / method unit tests
+src/            model methods, render, metrics, submission packaging
+configs/        experiment configs
+Analysis/       winning-stack scripts (F1/F2/P2, refiner, fleet driver, packager)
+scripts/        Kaggle upload builders, sweep runners, diagnostics
+sss_experiment/ SSS backbone ablation (heavy artifacts gitignored)
+docs/           all documentation (see the table above)
+results/        ablation CSVs, per-run metadata
+submissions/    submission zips (versioned; heavy staging gitignored)
+tests/          loss / method unit tests
 ```
 
-Heavy artifacts (checkpoints, renders, dense point clouds, submission zips, raw data)
-are gitignored and regenerable from the pipeline above.
+Heavy artifacts (checkpoints, renders, dense point clouds, submission zips, raw
+data) are gitignored and regenerable from the pipeline above.

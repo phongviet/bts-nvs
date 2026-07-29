@@ -55,6 +55,14 @@ class PerceptualLossMixin:
         loss_dict = super().get_loss_dict(outputs, batch, metrics_dict)
         cfg = self.config
         if not self.training or cfg.lpips_loss_weight <= 0 or self.step < cfg.lpips_start_step:
+            # exp009 (Jul-9) logged "two weights gave byte-identical scores -> suspected no-op"
+            # and the model code below reads correct, so the fault was in the harness -- most
+            # likely this early return firing for the whole run. Record WHY we skipped, so a
+            # silent no-op can never again be mistaken for a measured null result.
+            self._lpips_trace_skip = (
+                f"training={self.training} weight={cfg.lpips_loss_weight} "
+                f"step={getattr(self, 'step', None)} start={cfg.lpips_start_step}"
+            )
             return loss_dict
 
         gt_img, pred_img = self._perceptual_pair(outputs, batch)
@@ -66,8 +74,20 @@ class PerceptualLossMixin:
             x = int(torch.randint(0, gt.shape[-1] - ps + 1, ()).item())
             gt = gt[..., y:y + ps, x:x + ps]
             pred = pred[..., y:y + ps, x:x + ps]
-        loss_dict["lpips_loss"] = cfg.lpips_loss_weight * self.lpips_vgg_loss(
-            pred.clamp(0, 1), gt.clamp(0, 1))
+        raw = self.lpips_vgg_loss(pred.clamp(0, 1), gt.clamp(0, 1))
+        term = cfg.lpips_loss_weight * raw
+        # THE exp009 GUARD. A term that is detached, zero, or non-finite contributes nothing to
+        # the parameters, which is exactly how exp009 produced byte-identical scores at two
+        # different weights. Fail loudly at the first step instead of after 30k iterations.
+        if cfg.lpips_trace_every and self.step % cfg.lpips_trace_every == 0:
+            print(f"[lpips-trace] step {self.step} raw {float(raw):.6f} "
+                  f"weighted {float(term):.6f} requires_grad={term.requires_grad}", flush=True)
+        if self.step == cfg.lpips_start_step:
+            assert term.requires_grad, (
+                "lpips term is DETACHED -- it cannot affect the parameters. This is the exp009 "
+                "no-op; fix before spending a run.")
+            assert torch.isfinite(term) and float(raw) > 0, f"lpips term degenerate: raw={float(raw)}"
+        loss_dict["lpips_loss"] = term
         return loss_dict
 
 
@@ -80,6 +100,9 @@ class SplatfactoPerceptualModelConfig(SplatfactoModelConfig):
     """Step to enable the term at (0 = immediately; fine-tune runs start hot)."""
     lpips_patch_size: int = 512
     """Random-crop size for the LPIPS term (0 = full image, needs big VRAM)."""
+    lpips_trace_every: int = 0
+    """Print the live loss value every N steps (0 = off). REQUIRED for any exp009 re-run:
+    exp009 was voided by a silent no-op, and a trace is the only proof the term is live."""
 
 
 class SplatfactoPerceptualModel(PerceptualLossMixin, SplatfactoModel):
@@ -92,6 +115,8 @@ class SplatfactoMCMCPerceptualModelConfig(SplatfactoMCMCModelConfig):
     lpips_loss_weight: float = 0.1
     lpips_start_step: int = 0
     lpips_patch_size: int = 512
+    lpips_trace_every: int = 0
+    """Print the live loss value every N steps (0 = off). REQUIRED for any exp009 re-run."""
 
 
 class SplatfactoMCMCPerceptualModel(PerceptualLossMixin, SplatfactoMCMCModel):

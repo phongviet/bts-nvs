@@ -1,0 +1,8 @@
+== START 11_bonsai_v2 [23:54]
+== DONE 11_bonsai_v2 [00:27]
+== PHASE1 BONSAI COMPLETE [Mon Jul 20 12:27:46 AM +07 2026] ==
+Compare against backbone-only 0.6759 on the same 25 frames.
+== START 12_chair_v2 [00:27]
+== DONE 12_chair_v2 [00:52]
+== PHASE1 CHAIR COMPLETE [Mon Jul 20 12:52:36 AM +07 2026] ==
+Compare against backbone-only 0.6506 on the same 25 frames.
