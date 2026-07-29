@@ -1,0 +1,68 @@
+{
+  "scene": "bonsai",
+  "date": "2026-07-29",
+  "hardware": "NVIDIA GeForce RTX 4070 Ti SUPER 16GB",
+  "backbone": {
+    "config": "runs/phase2/source_policy_pilot/bonsai/splatfacto/2026-07-29_025123/config.yml",
+    "iterations": 10000,
+    "initialization": "supplied sparse COLMAP",
+    "holdout_frames": 25,
+    "training_frames": 223
+  },
+  "refiner": {
+    "training_pairs": 60,
+    "iterations": 1000,
+    "crop": 256,
+    "batch_size": 4,
+    "base": 32,
+    "seed": 0
+  },
+  "external_holdout": {
+    "raw_spatial_dibr": {
+      "psnr": 25.2599,
+      "ssim": 0.810170,
+      "lpips": 0.340389,
+      "score": 0.658455
+    },
+    "legacy_loss_crop_selection": {
+      "psnr": 25.238141970041646,
+      "ssim": 0.8104728507995606,
+      "lpips": 0.34214587092399595,
+      "score": 0.6577123586905196
+    },
+    "exact_loss_full_score_selection": {
+      "psnr": 25.24152670980213,
+      "ssim": 0.8101103472709655,
+      "lpips": 0.3425862997770309,
+      "score": 0.6574477445292901
+    },
+    "legacy_loss_full_score_selection": {
+      "psnr": 25.219090884614584,
+      "ssim": 0.8105060648918152,
+      "lpips": 0.3425923842191696,
+      "score": 0.6574294110875641
+    }
+  },
+  "internal_full_frame_scores": {
+    "exact_loss": {
+      "250": 0.65876,
+      "500": 0.66352,
+      "750": 0.66272,
+      "1000": 0.66334,
+      "selected_iteration": 500
+    },
+    "legacy_loss": {
+      "250": 0.65973,
+      "500": 0.66239,
+      "750": 0.66337,
+      "1000": 0.66359,
+      "selected_iteration": 1000
+    }
+  },
+  "observed_peak_vram_mib": {
+    "splatfacto_training": 4038,
+    "exact_refiner_training": 7334,
+    "full_resolution_apply": 7052
+  },
+  "decision": "Reject all tested refiner changes for submission on this pilot; revalidate opt-in controls on the production 30k dense/SSS anchor."
+}

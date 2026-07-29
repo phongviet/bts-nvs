@@ -6,7 +6,8 @@ views + our own 3DGS model; no test images, no external data):
   input  (7ch): [ F1-remap 3DGS render (3) | DIBR blended output (3) | visibility mask (1) ]
   target (3ch): the real RAW/distorted train image
   net         : small U-Net, residual on top of the DIBR output (starts = DIBR)
-  loss        : the grader's own objective  0.4*LPIPS_vgg + 0.3*(1-SSIM) + 0.3*L1
+  loss        : legacy default is 0.4*LPIPS_vgg + 0.3*(1-SSIM) + 0.3*L1;
+                --loss-mode psnr --ssim-mode metric matches the actual grader
   supervision : leave-one-out over train views (neighbors exclude the target view),
                 so every training pair mimics a novel test view.
 
@@ -38,6 +39,7 @@ _spec.loader.exec_module(dibr04)
 Warper, load_test_poses = dibr04.Warper, dibr04.load_test_poses
 
 OUT = ANALYSIS / "X5_refiner"
+PSNR_MAX = 50.0
 
 
 # ----------------------------- differentiable SSIM -----------------------------
@@ -50,6 +52,11 @@ def _gauss_window(ch, ws=11, sigma=1.5, device="cpu"):
 
 
 def ssim(a, b, window):
+    """Legacy Gaussian/zero-padded differentiable SSIM.
+
+    Kept unchanged because existing v7a checkpoints were trained with it.
+    New experiments should use :func:`metric_ssim` via ``--ssim-mode metric``.
+    """
     ch = a.shape[1]
     mu_a = F.conv2d(a, window, padding=5, groups=ch)
     mu_b = F.conv2d(b, window, padding=5, groups=ch)
@@ -60,6 +67,111 @@ def ssim(a, b, window):
     c1, c2 = 0.01 ** 2, 0.03 ** 2
     s = ((2 * mu_ab + c1) * (2 * sab + c2)) / ((mu_a2 + mu_b2 + c1) * (sa + sb + c2))
     return s.mean()
+
+
+def metric_ssim(a, b, win_size=11):
+    """Differentiable SSIM matching ``skimage`` used by ``src.metrics``.
+
+    The evaluator calls ``structural_similarity(..., win_size=11)`` with its
+    default uniform window and sample-covariance correction. Skimage discards
+    the five-pixel border before averaging, so valid convolutions are exactly
+    the relevant part of its score map. Returning one value per image also
+    preserves the grader's per-image-then-mean aggregation.
+    """
+    if a.shape != b.shape or a.ndim != 4:
+        raise ValueError(f"metric_ssim expects equal BCHW tensors, got {a.shape} and {b.shape}")
+    if min(a.shape[-2:]) < win_size:
+        raise ValueError(f"metric_ssim needs H,W >= {win_size}, got {a.shape[-2:]}")
+    ch = a.shape[1]
+    window = torch.full(
+        (ch, 1, win_size, win_size),
+        1.0 / (win_size * win_size),
+        dtype=a.dtype,
+        device=a.device,
+    )
+    mu_a = F.conv2d(a, window, groups=ch)
+    mu_b = F.conv2d(b, window, groups=ch)
+    mu_a2, mu_b2, mu_ab = mu_a.square(), mu_b.square(), mu_a * mu_b
+    # skimage defaults to use_sample_covariance=True.
+    cov_norm = (win_size * win_size) / (win_size * win_size - 1)
+    sa = cov_norm * (F.conv2d(a.square(), window, groups=ch) - mu_a2)
+    sb = cov_norm * (F.conv2d(b.square(), window, groups=ch) - mu_b2)
+    sab = cov_norm * (F.conv2d(a * b, window, groups=ch) - mu_ab)
+    c1, c2 = 0.01 ** 2, 0.03 ** 2
+    score_map = ((2 * mu_ab + c1) * (2 * sab + c2)) / (
+        (mu_a2 + mu_b2 + c1) * (sa + sb + c2)
+    )
+    return score_map.flatten(1).mean(1)
+
+
+def normalized_psnr_loss(pred, target, psnr_max=PSNR_MAX):
+    """Return the exact differentiable negative normalized-PSNR term per image.
+
+    The grader rewards ``min(PSNR / psnr_max, 1)``. With inputs in [0, 1],
+    ``PSNR = -10*log10(MSE)``, hence minimizing the negative reward is
+    ``(10/psnr_max)*log10(MSE)``. Clamping MSE at ``10**(-psnr_max/10)``
+    reproduces the grader's 50 dB cap and prevents an unstable log near zero.
+    """
+    if pred.shape != target.shape or pred.ndim < 2:
+        raise ValueError(
+            f"normalized_psnr_loss expects equal batched tensors, got "
+            f"{pred.shape} and {target.shape}"
+        )
+    mse = (pred - target).square().flatten(1).mean(1)
+    min_mse = 10.0 ** (-float(psnr_max) / 10.0)
+    return (10.0 / float(psnr_max)) * torch.log10(mse.clamp_min(min_mse))
+
+
+def refiner_objective(pred, target, lpips_fn, legacy_window, loss_mode="l1",
+                      ssim_mode="legacy"):
+    """Competition-shaped refiner objective plus detached diagnostic parts.
+
+    Defaults reproduce the shipped v7a regression path. ``loss_mode=psnr`` and
+    ``ssim_mode=metric`` remove the two known surrogate mismatches. ``hybrid``
+    averages the legacy L1 and exact normalized-PSNR third terms.
+    """
+    if loss_mode not in {"l1", "psnr", "hybrid"}:
+        raise ValueError(f"unknown loss_mode {loss_mode!r}")
+    if ssim_mode not in {"legacy", "metric"}:
+        raise ValueError(f"unknown ssim_mode {ssim_mode!r}")
+
+    # Preserve the original reduction order and graph exactly on the default
+    # path. In particular, do not build an unused log-PSNR graph every step.
+    if loss_mode == "l1" and ssim_mode == "legacy":
+        l1 = F.l1_loss(pred, target)
+        ssim_value = ssim(pred, target, legacy_window)
+        lpips_value = lpips_fn(pred * 2 - 1, target * 2 - 1).mean()
+        loss = 0.4 * lpips_value + 0.3 * (1 - ssim_value) + 0.3 * l1
+        return loss, {
+            "lpips": float(lpips_value.detach()),
+            "ssim": float(ssim_value.detach()),
+            "l1": float(l1.detach()),
+            "psnr_norm": float("nan"),
+        }
+
+    lp_per = lpips_fn(pred * 2 - 1, target * 2 - 1).flatten(1).mean(1)
+    if ssim_mode == "metric":
+        ssim_per = metric_ssim(pred, target)
+    else:
+        # Preserve the old scalar aggregation exactly for legacy runs.
+        ssim_per = ssim(pred, target, legacy_window).expand(pred.shape[0])
+
+    l1 = F.l1_loss(pred, target)
+    psnr_loss = normalized_psnr_loss(pred, target).mean()
+    if loss_mode == "l1":
+        fidelity = l1
+    elif loss_mode == "psnr":
+        fidelity = psnr_loss
+    else:
+        fidelity = 0.5 * (l1 + psnr_loss)
+    loss = 0.4 * lp_per.mean() + 0.3 * (1 - ssim_per.mean()) + 0.3 * fidelity
+    parts = {
+        "lpips": float(lp_per.mean().detach()),
+        "ssim": float(ssim_per.mean().detach()),
+        "l1": float(l1.detach()),
+        "psnr_norm": float((-psnr_loss).detach()),
+    }
+    return loss, parts
 
 
 # ----------------------------------- U-Net -------------------------------------
@@ -260,7 +372,7 @@ def pose_guard(w, c2w, guard, K, cut, mult):
 def build_pairs(scene, K=3, tol=0.03, guard=0.18, warper_kw=None, variant="",
                 max_pairs=0, evidence=False, rel_tol=None, flow_align=None,
                 exposure=False, pair_select="stride", sparse_guard_mult=1.0,
-                sparse_quantile=0.65):
+                sparse_quantile=0.65, source_policy="spatial"):
     cache = OUT / scene / f"pairs{variant}"
     cache.mkdir(parents=True, exist_ok=True)
     w = Warper(scene, **(warper_kw or {}))
@@ -317,7 +429,8 @@ def build_pairs(scene, K=3, tol=0.03, guard=0.18, warper_kw=None, variant="",
             c2w, w.f, w.f, w.cx, w.cy, w.W_tr, w.H_tr,
             K=K, exclude_names={name}, tol=tol, out_k=out_k,
             guard=pose_guard(w, c2w, guard, K, _cut, sparse_guard_mult), canvas_margin=cmargin, rel_tol=rel_tol,
-            flow_align=flow_align, exposure=exposure, override_name=name)
+            flow_align=flow_align, exposure=exposure, override_name=name,
+            source_policy=source_policy)
         (dibr, _, rgb_T, mask), ev = (res[:4], res[4] if evidence else None)
         tgt = w.train_img(idx)  # real distorted train image, HxWx3 float [0,1]
         inp = stack_channels(rgb_T, dibr, mask, ev)
@@ -380,6 +493,15 @@ class PairPool:
         return (np.asarray(self._inp[i][y0:y0 + c, x0:x0 + c], dtype=np.float32),
                 np.asarray(self._tgt[i][y0:y0 + c, x0:x0 + c], dtype=np.float32))
 
+    def full(self, i):
+        """One full pair as float32 HWC, loaded sequentially for Score selection.
+
+        Full-frame checkpoint evaluation deliberately processes one image at a
+        time, keeping peak host/GPU memory independent of validation-set size.
+        """
+        return (np.asarray(self._inp[i], dtype=np.float32),
+                np.asarray(self._tgt[i], dtype=np.float32))
+
     @property
     def ci(self):
         return self._inp[0].shape[-1]
@@ -415,7 +537,11 @@ class PatchD(nn.Module):
 # ------------------------------- stage 2: train --------------------------------
 def train(scene, cache, names, device, iters=3000, crop=256, bs=4, lr=2e-4, val_frac=0.15,
           base=32, ema=0.0, suffix="", seed=0, blocks="conv",
-          adv=0.0, adv_warmup=1000, adv_lr=1e-4, init_from=None):
+          adv=0.0, adv_warmup=1000, adv_lr=1e-4, init_from=None,
+          loss_mode="l1", ssim_mode="legacy", checkpoint_metric="crop_loss",
+          checkpoint_iters=(500, 1000, 2000, 4000, 6000),
+          checkpoint_score_frames=0, checkpoint_tta=False,
+          keep_checkpoints=False):
     import lpips
     # The train/val SPLIT is seeded separately (fixed) from the weight init +
     # batch order (seed): a seed-ensemble (reserve R2) must average nets that
@@ -455,10 +581,8 @@ def train(scene, cache, names, device, iters=3000, crop=256, bs=4, lr=2e-4, val_
     win = _gauss_window(3, device=device)
 
     def grader_loss(pred, tgt):
-        l1 = F.l1_loss(pred, tgt)
-        s = ssim(pred, tgt, win)
-        lp = lpips_fn(pred * 2 - 1, tgt * 2 - 1).mean()
-        return 0.4 * lp + 0.3 * (1 - s) + 0.3 * l1, (lp.item(), s.item(), l1.item())
+        return refiner_objective(
+            pred, tgt, lpips_fn, win, loss_mode=loss_mode, ssim_mode=ssim_mode)
 
     def sample_batch(pool, rng_):
         xs, ys = [], []
@@ -483,6 +607,20 @@ def train(scene, cache, names, device, iters=3000, crop=256, bs=4, lr=2e-4, val_
     val_batches = [sample_batch(val, vrng) for _ in range(8)]
     val_batches = [(x.cpu(), y.cpu()) for x, y in val_batches]
 
+    if checkpoint_metric not in {"crop_loss", "full_score"}:
+        raise ValueError(f"unknown checkpoint_metric {checkpoint_metric!r}")
+    checkpoint_steps = {int(x) for x in checkpoint_iters if 0 < int(x) <= iters}
+    checkpoint_steps.add(iters)
+    if checkpoint_score_frames and checkpoint_score_frames < len(val):
+        score_indices = np.linspace(
+            0, len(val) - 1, checkpoint_score_frames).round().astype(int).tolist()
+    else:
+        score_indices = list(range(len(val)))
+    if checkpoint_metric == "full_score":
+        print(f"checkpoint selection: full-frame grader Score at "
+              f"{sorted(checkpoint_steps)} on {len(score_indices)} val frames "
+              f"(TTA={checkpoint_tta})")
+
     ema_state = ({k: v.detach().clone() for k, v in net.state_dict().items()}
                  if ema > 0 else None)
 
@@ -502,6 +640,46 @@ def train(scene, cache, names, device, iters=3000, crop=256, bs=4, lr=2e-4, val_
             net.load_state_dict(backup)
         return float(np.mean(vl))
 
+    def eval_full_score(state=None):
+        """Actual full-frame selection metric, evaluated one image at a time.
+
+        This deliberately mirrors ``src.metrics.compute_metrics`` (skimage
+        PSNR/SSIM and VGG LPIPS) instead of ranking an adversarial checkpoint by
+        its regression crop loss. Inputs/targets come from the fixed val pair
+        split; no hidden-test image or leaderboard feedback is involved.
+        """
+        from skimage.metrics import peak_signal_noise_ratio as sk_psnr
+        from skimage.metrics import structural_similarity as sk_ssim
+
+        backup = None
+        if state is not None:
+            backup = {k: v.detach().clone() for k, v in net.state_dict().items()}
+            net.load_state_dict(state)
+        net.eval()
+        rows = []
+        with torch.no_grad():
+            for i in score_indices:
+                inp, tgt = val.full(i)
+                pred = _net_apply(
+                    net, inp.transpose(2, 0, 1), device, tta=checkpoint_tta)
+                psnr = float(sk_psnr(tgt, pred, data_range=1.0))
+                ssim_v = float(sk_ssim(
+                    tgt, pred, data_range=1.0, channel_axis=2, win_size=11))
+                tt = torch.from_numpy(tgt).permute(2, 0, 1)[None].to(device)
+                tp = torch.from_numpy(pred).permute(2, 0, 1)[None].to(device)
+                lp = float(lpips_fn(tp * 2 - 1, tt * 2 - 1).item())
+                psnr_norm = min(max(psnr / PSNR_MAX, 0.0), 1.0)
+                score = 0.4 * (1 - lp) + 0.3 * ssim_v + 0.3 * psnr_norm
+                rows.append((psnr, ssim_v, lp, score))
+                del inp, tgt, pred, tt, tp
+        if backup is not None:
+            net.load_state_dict(backup)
+        arr = np.asarray(rows, dtype=np.float64)
+        return {"psnr": float(arr[:, 0].mean()),
+                "ssim": float(arr[:, 1].mean()),
+                "lpips": float(arr[:, 2].mean()),
+                "score": float(arr[:, 3].mean())}
+
     # optional critic. adv == 0 -> not built at all, so the regression path is
     # bit-identical to every run that came before this flag existed.
     critic = optd = None
@@ -510,7 +688,8 @@ def train(scene, cache, names, device, iters=3000, crop=256, bs=4, lr=2e-4, val_
         optd = torch.optim.Adam(critic.parameters(), lr=adv_lr, betas=(0.5, 0.9))
         print(f"adversarial: weight {adv} (ramped over {adv_warmup} it), critic lr {adv_lr}")
 
-    best_val, best_state = 1e9, None
+    best_value = float("inf") if checkpoint_metric == "crop_loss" else -float("inf")
+    best_state, best_step = None, None
     for it in range(1, iters + 1):
         net.train()
         x, y = sample_batch(fit, rng)
@@ -539,13 +718,28 @@ def train(scene, cache, names, device, iters=3000, crop=256, bs=4, lr=2e-4, val_
         if it % 250 == 0 or it == iters:
             vloss = eval_val(ema_state)
             print(f"  it {it}: train_loss {loss.item():.4f}  val_loss {vloss:.4f}")
-            if vloss < best_val:
+            if checkpoint_metric == "crop_loss" and vloss < best_value:
                 src = ema_state if ema_state is not None else net.state_dict()
-                best_val, best_state = vloss, {k: v.detach().cpu().clone()
-                                               for k, v in src.items()}
+                best_value, best_step = vloss, it
+                best_state = {k: v.detach().cpu().clone() for k, v in src.items()}
+        if checkpoint_metric == "full_score" and it in checkpoint_steps:
+            src = ema_state if ema_state is not None else net.state_dict()
+            full = eval_full_score(src)
+            print(f"    full-frame: Score={full['score']:.5f} "
+                  f"PSNR={full['psnr']:.3f} SSIM={full['ssim']:.4f} "
+                  f"LPIPS={full['lpips']:.4f}")
+            state_cpu = {k: v.detach().cpu().clone() for k, v in src.items()}
+            if keep_checkpoints:
+                torch.save(state_cpu, OUT / scene / f"refiner{suffix}_it{it}.pt")
+            if full["score"] > best_value:
+                best_value, best_step, best_state = full["score"], it, state_cpu
+    if best_state is None:
+        raise RuntimeError("checkpoint selection produced no candidate")
     net.load_state_dict(best_state)
     torch.save(net.state_dict(), OUT / scene / f"refiner{suffix}.pt")
-    print(f"{scene}: best val_loss {best_val:.4f} -> saved refiner{suffix}.pt")
+    metric_name = "val_loss" if checkpoint_metric == "crop_loss" else "full-frame Score"
+    print(f"{scene}: best {metric_name} {best_value:.5f} at it {best_step} "
+          f"-> saved refiner{suffix}.pt")
     return net
 
 
@@ -588,7 +782,9 @@ def _net_apply_ensemble(nets, inp, device, tta=False):
 
 def apply_test(scene, net, device, K=3, tol=0.03, guard=0.18,
                warper_kw=None, variant="", suffix="", tta=False, png=False,
-               evidence=False, rel_tol=None, flow_align=None, exposure=False, sparse_guard_mult=1.0, sparse_quantile=0.65):
+               evidence=False, rel_tol=None, flow_align=None, exposure=False,
+               sparse_guard_mult=1.0, sparse_quantile=0.65,
+               source_policy="spatial"):
     from src.metrics import compute_metrics
     scene_dir = dibr04.scene_raw(scene) / scene
     rows = load_test_poses(scene_dir / "test/test_poses.csv")
@@ -623,7 +819,7 @@ def apply_test(scene, net, device, K=3, tol=0.03, guard=0.18,
             c2w, r["fx"], r["fy"], r["cx"], r["cy"], r["width"], r["height"],
             K=K, tol=tol, out_k=out_k, guard=pose_guard(w, c2w, guard, K, _cut, sparse_guard_mult), canvas_margin=cmargin,
             rel_tol=rel_tol, flow_align=flow_align, exposure=exposure,
-            override_name=r["image_name"])
+            override_name=r["image_name"], source_policy=source_policy)
         (dibr, _, rgb_T, mask), ev = (res[:4], res[4] if evidence else None)
         np.savez_compressed(fp, inp=stack_channels(rgb_T, dibr, mask, ev))
     for r in rows:
@@ -656,16 +852,27 @@ def apply_test(scene, net, device, K=3, tol=0.03, guard=0.18,
 
 
 def read_holdout(scene, phase="round2"):
-    """Val frame names for a GT-less round-2 scene (written by make_val_split)."""
-    f = REPO / "data" / "processed" / phase / scene / "splits" / "val_ids.txt"
-    if not f.exists():
-        raise SystemExit(f"{scene}: no val split at {f} -- run scripts/val_holdout_run.sh first")
+    """Val names, with phase2/round2 compatibility for local and Kaggle trees."""
+    phases = [phase]
+    if phase in {"phase2", "round2"}:
+        phases += [p for p in ("phase2", "round2") if p != phase]
+    candidates = [
+        REPO / "data" / "processed" / p / scene / "splits" / "val_ids.txt"
+        for p in phases
+    ]
+    f = next((path for path in candidates if path.exists()), None)
+    if f is None:
+        searched = ", ".join(str(path) for path in candidates)
+        raise SystemExit(f"{scene}: no val split under {searched} -- run "
+                         "scripts/val_holdout_run.sh first")
     return sorted(f.read_text().split())
 
 
 def apply_val(scene, net, device, holdout, K=3, tol=0.03, guard=0.18,
               warper_kw=None, variant="", suffix="", tta=False,
-              evidence=False, rel_tol=None, flow_align=None, exposure=False, sparse_guard_mult=1.0, sparse_quantile=0.65):
+              evidence=False, rel_tol=None, flow_align=None, exposure=False,
+              sparse_guard_mult=1.0, sparse_quantile=0.65,
+              source_policy="spatial"):
     """Score the full stack on held-out REAL train frames of a GT-less scene.
 
     bonsai/chair ship no test GT, so apply_test() can never report a number for
@@ -694,7 +901,7 @@ def apply_val(scene, net, device, holdout, K=3, tol=0.03, guard=0.18,
             c2w, w.f, w.f, w.cx, w.cy, w.W_tr, w.H_tr,
             K=K, tol=tol, out_k=out_k, guard=pose_guard(w, c2w, guard, K, _cut, sparse_guard_mult), canvas_margin=cmargin,
             rel_tol=rel_tol, flow_align=flow_align, exposure=exposure,
-            override_name=name)
+            override_name=name, source_policy=source_policy)
         (dibr, _, rgb_T, mask), ev = (res[:4], res[4] if evidence else None)
         inp = stack_channels(rgb_T, dibr, mask, ev).astype(np.float32)
         img = _net_apply(net, inp.transpose(2, 0, 1), device, tta=tta)
@@ -735,6 +942,12 @@ def main():
                     help="skip training; load refiner{suffix}.pt (or refiner.pt)")
     ap.add_argument("--suffix", default="", help="tag for refiner.pt/renders/metrics outputs")
     ap.add_argument("--ss", type=int, default=1, help="Warper supersample factor")
+    ap.add_argument("--K", type=int, default=3,
+                    help="number of DIBR/evidence source views (shipped default: 3)")
+    ap.add_argument("--source-policy", choices=["spatial", "pose", "temporal"],
+                    default="spatial",
+                    help="source ranking: shipped center distance, pose-aware, or "
+                         "temporally bracketed then pose-aware")
     ap.add_argument("--sample", choices=["bilinear", "cubic"], default="bilinear")
     ap.add_argument("--config", default=None, help="override backbone checkpoint dir")
     ap.add_argument("--render-override", default=None,
@@ -767,6 +980,24 @@ def main():
     ap.add_argument("--adv-warmup", type=int, default=1000,
                     help="iterations over which the adversarial weight ramps 0 -> --adv")
     ap.add_argument("--adv-lr", type=float, default=1e-4, help="critic learning rate")
+    ap.add_argument("--loss-mode", choices=["l1", "psnr", "hybrid"], default="l1",
+                    help="third refiner objective term: shipped L1, exact clamped "
+                         "negative PSNR/50, or an equal hybrid")
+    ap.add_argument("--ssim-mode", choices=["legacy", "metric"], default="legacy",
+                    help="legacy Gaussian/zero-padded training SSIM or evaluator-aligned "
+                         "uniform valid-window SSIM")
+    ap.add_argument("--checkpoint-metric", choices=["crop_loss", "full_score"],
+                    default="crop_loss",
+                    help="select EMA checkpoint by shipped crop regression loss or by "
+                         "full-frame VGG-LPIPS/SSIM/PSNR Score")
+    ap.add_argument("--checkpoint-iters", default="500,1000,2000,4000,6000",
+                    help="comma-separated full-frame checkpoint evaluation iterations; "
+                         "the final iteration is always included")
+    ap.add_argument("--checkpoint-score-frames", type=int, default=0,
+                    help="number of fixed validation frames used for full-score selection "
+                         "(0 = all; cap only for a cheap pilot)")
+    ap.add_argument("--keep-checkpoints", action="store_true",
+                    help="retain each fixed-iteration checkpoint as well as the winner")
     ap.add_argument("--init-from", default=None,
                     help="warm-start the refiner from this .pt (use the proven "
                          "refiner_v2.pt when running an --adv arm)")
@@ -838,6 +1069,10 @@ def main():
             variant += f"_ss{args.ss}"
         if args.sample == "cubic":
             variant += "_cub"
+        if args.K != 3:
+            variant += f"_k{args.K}"
+        if args.source_policy != "spatial":
+            variant += f"_src{args.source_policy}"
         if args.config:
             variant += "_bb"
         # anything that changes what the npz CONTAINS must change the cache tag,
@@ -868,35 +1103,52 @@ def main():
         net = load_refiner(ckpt, device)
         print(f"loaded {ckpt} (ci={net.ci} base={net.base} blocks={net.blocks_kind})")
     else:
-        cache, names, _ = build_pairs(args.scene, warper_kw=warper_kw, variant=variant,
-                                      max_pairs=args.max_pairs, evidence=args.evidence,
-                                      rel_tol=args.rel_tol, flow_align=flow_align,
-                                      exposure=args.exposure, pair_select=args.pair_select,
-                  sparse_guard_mult=args.sparse_guard_mult,
-                  sparse_quantile=args.sparse_quantile)
+        cache, names, _ = build_pairs(args.scene, K=args.K, warper_kw=warper_kw,
+                                      variant=variant, max_pairs=args.max_pairs,
+                                      evidence=args.evidence, rel_tol=args.rel_tol,
+                                      flow_align=flow_align, exposure=args.exposure,
+                                      pair_select=args.pair_select,
+                                      sparse_guard_mult=args.sparse_guard_mult,
+                                      sparse_quantile=args.sparse_quantile,
+                                      source_policy=args.source_policy)
         if args.stage == "pairs":
             return
+        try:
+            checkpoint_iters = tuple(
+                int(x.strip()) for x in args.checkpoint_iters.split(",") if x.strip())
+        except ValueError as exc:
+            raise SystemExit(f"invalid --checkpoint-iters {args.checkpoint_iters!r}: {exc}")
         net = train(args.scene, cache, names, device, iters=args.iters, bs=args.bs,
                     base=args.base, ema=args.ema, suffix=args.suffix, seed=args.seed,
                     blocks=args.blocks, adv=args.adv, adv_warmup=args.adv_warmup,
-                    adv_lr=args.adv_lr, init_from=args.init_from)
+                    adv_lr=args.adv_lr, init_from=args.init_from,
+                    loss_mode=args.loss_mode, ssim_mode=args.ssim_mode,
+                    checkpoint_metric=args.checkpoint_metric,
+                    checkpoint_iters=checkpoint_iters,
+                    checkpoint_score_frames=args.checkpoint_score_frames,
+                    checkpoint_tta=args.tta,
+                    keep_checkpoints=args.keep_checkpoints)
         if args.stage == "train":
             return
     if holdout is not None:
         # apply_val builds its own Warper with holdout_names, so hand it the
         # rest of warper_kw without the duplicate key
         wk = {k: v for k, v in warper_kw.items() if k != "holdout_names"}
-        apply_val(args.scene, net, device, holdout, warper_kw=wk, variant=variant,
-                  suffix=args.suffix, tta=args.tta, evidence=args.evidence,
-                  rel_tol=args.rel_tol, flow_align=flow_align, exposure=args.exposure,
+        apply_val(args.scene, net, device, holdout, K=args.K, warper_kw=wk,
+                  variant=variant, suffix=args.suffix, tta=args.tta,
+                  evidence=args.evidence, rel_tol=args.rel_tol,
+                  flow_align=flow_align, exposure=args.exposure,
                   sparse_guard_mult=args.sparse_guard_mult,
-                  sparse_quantile=args.sparse_quantile)
+                  sparse_quantile=args.sparse_quantile,
+                  source_policy=args.source_policy)
     else:
-        apply_test(args.scene, net, device, warper_kw=warper_kw, variant=variant,
-                   suffix=args.suffix, tta=args.tta, png=args.png, evidence=args.evidence,
-                   rel_tol=args.rel_tol, flow_align=flow_align, exposure=args.exposure,
-                  sparse_guard_mult=args.sparse_guard_mult,
-                  sparse_quantile=args.sparse_quantile)
+        apply_test(args.scene, net, device, K=args.K, warper_kw=warper_kw,
+                   variant=variant, suffix=args.suffix, tta=args.tta, png=args.png,
+                   evidence=args.evidence, rel_tol=args.rel_tol,
+                   flow_align=flow_align, exposure=args.exposure,
+                   sparse_guard_mult=args.sparse_guard_mult,
+                   sparse_quantile=args.sparse_quantile,
+                   source_policy=args.source_policy)
 
 
 if __name__ == "__main__":

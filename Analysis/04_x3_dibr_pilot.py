@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -40,20 +41,29 @@ from PIL import Image
 REPO = Path(__file__).resolve().parents[1]
 RAW = REPO / "data" / "raw" / "phase1" / "public_set"
 PRIVATE = REPO / "data" / "raw" / "phase1" / "private_set1"
-ROUND2 = REPO / "data" / "raw" / "VAI_NVS_DATA_ROUND2"
+# The Kaggle archive name was the historical root; the local phase runner uses
+# data/raw/phase2[/round2]. Accept both so a documented local run joins the
+# DIBR/refiner without an extra out-of-tree symlink.
+ROUND2_ROOTS = (
+    REPO / "data" / "raw" / "phase2" / "round2",
+    REPO / "data" / "raw" / "phase2",
+    REPO / "data" / "raw" / "VAI_NVS_DATA_ROUND2",
+)
+ROUND2 = next((root for root in ROUND2_ROOTS if root.exists()), ROUND2_ROOTS[-1])
 
 
 def scene_raw(scene: str) -> Path:
-    """Phase-1 public scenes live under public_set, private under private_set1;
-    round-2 scenes (the only ones still graded) under VAI_NVS_DATA_ROUND2."""
-    for root in (RAW, PRIVATE, ROUND2):
+    """Resolve phase-1 and either supported round-2 extraction layout."""
+    roots = (RAW, PRIVATE, *ROUND2_ROOTS)
+    for root in roots:
         if (root / scene).exists():
             return root
-    raise SystemExit(f"scene {scene!r} not found under {RAW}, {PRIVATE} or {ROUND2}")
+    searched = ", ".join(str(root) for root in roots)
+    raise SystemExit(f"scene {scene!r} not found under: {searched}")
 
 
 def is_round2(scene: str) -> bool:
-    return (ROUND2 / scene).exists()
+    return any((root / scene).exists() for root in ROUND2_ROOTS)
 OUT = Path(__file__).resolve().parent / "X3_dibr"
 sys.path.insert(0, str(REPO))
 
@@ -133,10 +143,15 @@ def find_config(scene: str) -> Path:
     # drone scenes land there as their fleet finishes).
     p = CONFIGS.get(scene)
     if p is None:
-        p = REPO / "runs" / "round2" / "phase_locked" / scene
-        if not p.exists():
+        run_candidates = [
+            REPO / "runs" / phase / "phase_locked" / scene
+            for phase in ("phase2", "round2")
+        ]
+        p = next((root for root in run_candidates if root.exists()), None)
+        if p is None:
+            searched = ", ".join(str(root) for root in run_candidates)
             raise SystemExit(
-                f"no backbone for {scene!r}: not in CONFIGS and {p} does not exist")
+                f"no backbone for {scene!r}: not in CONFIGS and none under {searched}")
     if p.name == "config.yml":
         return p
     hits = sorted(p.glob("**/config.yml"))
@@ -166,6 +181,73 @@ def qvec2rotmat(q):
         [2 * x * y + 2 * z * w, 1 - 2 * x * x - 2 * z * z, 2 * y * z - 2 * x * w],
         [2 * x * z - 2 * y * w, 2 * y * z + 2 * x * w, 1 - 2 * x * x - 2 * y * y],
     ])
+
+
+def frame_index(name):
+    """Last numeric run in a filename, used only as supplied capture order."""
+    if not name:
+        return None
+    hits = re.findall(r"\d+", Path(str(name)).stem)
+    return int(hits[-1]) if hits else None
+
+
+def rotation_gaps_deg(rotations, target_rotation):
+    """Geodesic SO(3) gap from each source c2w rotation to the target."""
+    rel = np.einsum("nij,jk->nik", np.transpose(rotations, (0, 2, 1)),
+                    target_rotation)
+    cos = np.clip((np.trace(rel, axis1=1, axis2=2) - 1.0) * 0.5, -1.0, 1.0)
+    return np.degrees(np.arccos(cos))
+
+
+def select_source_indices(names, centers, rotations, target_center, target_rotation,
+                          target_name, count, policy="spatial", exclude_names=()):
+    """Rank source views without using target pixels or test ground truth.
+
+    ``spatial`` is the shipped camera-center ranking. ``pose`` also accounts for
+    viewing direction. ``temporal`` fixes repeated-orbit aliasing by reserving
+    the nearest earlier and later capture slots, then filling from pose-ranked
+    sources. The latter is intended for sequential ``frame_*`` indoor scenes;
+    it falls back to ``pose`` when filenames carry no usable capture index.
+    """
+    if policy not in {"spatial", "pose", "temporal"}:
+        raise ValueError(f"unknown source policy {policy!r}")
+    names = list(names)
+    centers = np.asarray(centers, dtype=np.float64)
+    rotations = np.asarray(rotations, dtype=np.float64)
+    excluded = set(exclude_names)
+    available = [i for i, name in enumerate(names) if name not in excluded]
+    if not available or count <= 0:
+        return []
+
+    dist = np.linalg.norm(centers - np.asarray(target_center), axis=1)
+    if policy == "spatial":
+        # Preserve the shipped np.argsort ordering exactly, including its tie
+        # behavior; source-policy support must be a no-op by default.
+        return [i for i in np.argsort(dist) if i in available][:count]
+
+    extent = float(np.linalg.norm(np.ptp(centers, axis=0)))
+    extent = max(extent, 1e-9)
+    angle = rotation_gaps_deg(rotations, np.asarray(target_rotation))
+    pose_order = sorted(
+        available, key=lambda i: (dist[i] / extent + angle[i] / 45.0, names[i]))
+    if policy == "pose":
+        return pose_order[:count]
+
+    target_frame = frame_index(target_name)
+    source_frames = [frame_index(name) for name in names]
+    if target_frame is None or not any(x is not None for x in source_frames):
+        return pose_order[:count]
+    earlier = [i for i in available
+               if source_frames[i] is not None and source_frames[i] < target_frame]
+    later = [i for i in available
+             if source_frames[i] is not None and source_frames[i] > target_frame]
+    selected = []
+    if earlier:
+        selected.append(max(earlier, key=lambda i: source_frames[i]))
+    if later:
+        selected.append(min(later, key=lambda i: source_frames[i]))
+    selected.extend(i for i in pose_order if i not in selected)
+    return selected[:count]
 
 
 class Warper:
@@ -294,6 +376,7 @@ class Warper:
             raise SystemExit(f"{scene}: {len(missing)} holdout frames have no pose "
                              f"in images.bin: {sorted(missing)[:5]}...")
         self.centers = np.stack([c for _, _, c in self.train])
+        self.rotations = np.stack([c2w[:3, :3] for _, c2w, _ in self.train])
         self._depth_cache: dict[str, np.ndarray] = {}
         self._img_cache: dict[str, np.ndarray] = {}
         self._tgt_depth_cache: dict[str, np.ndarray] = {}
@@ -321,8 +404,15 @@ class Warper:
             # rather than assuming train_staging_dense: the bonsai val-hold-out
             # backbone trains on train_staging_holdout, and pointing it at the
             # full-train staging would silently re-admit the 25 val frames.
-            phase = "round2" if is_round2(self.scene) else "phase1"
-            proc = REPO / f"data/processed/{phase}/{self.scene}"
+            if is_round2(self.scene):
+                phases = (("phase2", "round2") if "phase2" in cfg_path.parts
+                          else ("round2", "phase2"))
+                proc_roots = [
+                    REPO / "data" / "processed" / phase / self.scene
+                    for phase in phases
+                ]
+            else:
+                proc_roots = [REPO / "data" / "processed" / "phase1" / self.scene]
             # FIX (2026-07-26): the run tree is only a HEURISTIC for the staging, and it
             # silently mis-fires. `ns-train --output-dir X --experiment-name <scene>` yields
             # .../<scene>/<method>/<ts>/config.yml, so parents[2] is the SCENE, the lookup
@@ -340,7 +430,10 @@ class Warper:
                       getattr(getattr(dm, "dataparser", None), "data", None)]
             cands = [n for n in (Path(str(s)).name for s in stored if s is not None) if n]
             cands += [cfg_path.parents[2].name, "train_staging_dense"]
-            local_data = next((proc / c for c in cands if (proc / c).exists()), None)
+            local_data = next(
+                (root / c for c in cands for root in proc_roots if (root / c).exists()),
+                None,
+            )
             if local_data is not None:
                 if local_data.name != cands[0]:
                     print(f"WARNING: backbone staging {cands[0]!r} not found locally; using "
@@ -486,7 +579,8 @@ class Warper:
     def synthesize(self, c2w_T: np.ndarray, fx, fy, cx, cy, W, H,
                    K=3, exclude_names=(), tol=0.03, min_w=1e-6, out_k=None,
                    guard=None, canvas_margin=0, rel_tol=None, flow_align=None,
-                   exposure=False, override_name=None, k_blend=None, fill_only=False):
+                   exposure=False, override_name=None, k_blend=None, fill_only=False,
+                   source_policy="spatial"):
         """out_k: if set (SIMPLE_RADIAL k), the OUTPUT image is synthesized in
         distorted geometry (matching raw DJI GT, per X4): each output pixel's ray
         is the undistorted direction, and the pinhole-rendered fallback/depth
@@ -569,7 +663,6 @@ class Warper:
         Xw = P_cam @ c2w_T[:3, :3].T + c2w_T[:3, 3]
 
         center_T = c2w_T[:3, 3]
-        cand = np.argsort(np.linalg.norm(self.centers - center_T, axis=1))
         # k_blend (>= K) widens the BLEND only. Measured on bonsai (2026-07-25): in the
         # starved early region 38.7% of pixels fall back to the plain render, and loosening
         # the photometric guard moved that by 0.8pp -- so the loss is geometric COVERAGE
@@ -577,7 +670,10 @@ class Warper:
         # the only thing that can fill them. The EVIDENCE stack still packs the nearest K
         # (4K+1 channels), so the refiner's input width is unchanged.
         K_use = max(K, k_blend or K)
-        neigh = [i for i in cand if self.train[i][0] not in exclude_names][:K_use]
+        neigh = select_source_indices(
+            [name for name, _, _ in self.train], self.centers, self.rotations,
+            center_T, c2w_T[:3, :3], override_name, K_use,
+            policy=source_policy, exclude_names=exclude_names)
         # fill_only: extra neighbours (beyond K) may ONLY write pixels the nearest-K blend
         # leaves uncovered. Measured on bonsai 2026-07-25: widening the blend outright raised
         # coverage (starved 38.7->33.7% fallback) but LOST quality in BOTH regions

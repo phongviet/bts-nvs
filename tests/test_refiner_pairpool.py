@@ -98,3 +98,12 @@ def test_channel_widths_roundtrip(tmp_path, ci):
     pool = PairPool(tmp_path, names, verbose=False)
     inp, _ = pool.crop(0, 0, 0, 8)
     assert inp.shape == (8, 8, ci)
+
+
+def test_full_pair_matches_old_loader_exactly(tmp_path):
+    names = _make_cache(tmp_path, n=1, H=40, W=52, ci=20)
+    pool = PairPool(tmp_path, names, verbose=False)
+    got_i, got_t = pool.full(0)
+    d = np.load(tmp_path / f"{names[0]}.npz")
+    assert np.array_equal(got_i, d["inp"].astype(np.float32))
+    assert np.array_equal(got_t, d["tgt"].astype(np.float32))
