@@ -1,4 +1,6 @@
-# bts-nvs — Viettel AI Race 2026, BTS Digital Twin (Novel View Synthesis)
+# bts-nvs — Viettel AI Race 2026, BTS Digital Twin (Novel View Synthesis) - Top 23
+
+<img width="1198" height="75" alt="image" src="https://github.com/user-attachments/assets/509edacc-5179-4ef6-a302-73702e31704a" />
 
 3D Gaussian Splatting + real-pixel reprojection pipeline for the BTS tower NVS
 competition. Scoring: `Score = 0.4·(1−LPIPS) + 0.3·SSIM + 0.3·(PSNR/50)`
